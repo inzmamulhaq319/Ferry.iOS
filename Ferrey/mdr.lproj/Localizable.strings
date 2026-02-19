@@ -1,0 +1,89 @@
+/* Localizable.strings (Mandarin - Simplified Chinese)
+ Ferrey
+ */
+
+// MARK: - Settings View
+"settings.title" = "设置";
+"settings.plan" = "套餐";
+"settings.plan.pro" = "Pro";
+"settings.plan.free" = "免费";
+"settings.restorePurchase" = "恢复购买";
+"settings.appVersion" = "应用版本";
+
+// Sections
+"settings.section.capture" = "拍摄";
+"settings.section.library" = "图库与存储";
+"settings.section.interface" = "界面";
+"settings.section.storage" = "存储空间";
+"settings.section.legal" = "法律信息";
+"settings.section.about" = "关于";
+
+// Toggles
+"settings.toggle.flash" = "默认开启闪光灯";
+"settings.toggle.volumeShutter" = "音量键拍摄";
+"settings.toggle.selfieMirroring" = "禁用自拍镜像";
+"settings.toggle.autoSave" = "自动保存到照片库";
+"settings.toggle.livePreview" = "实时滤镜预览";
+"settings.toggle.gridOverlay" = "网格叠加";
+"settings.toggle.hideLogo" = "隐藏标志";
+
+// Buttons & Links
+"settings.button.deleteAll" = "删除所有照片";
+"settings.link.terms" = "使用条款";
+"settings.link.privacy" = "隐私政策";
+"settings.link.aboutUs" = "关于我们";
+"settings.link.instagram" = "在 Instagram 上关注我们";
+"settings.link.rateUs" = "评价我们";
+
+// Alerts
+"settings.alert.deleteAll.title" = "删除所有照片？";
+"settings.alert.deleteAll.message" = "此操作无法撤销。所有保存在应用内的照片将被永久删除。";
+"settings.alert.deleteAll.button.delete" = "删除";
+"settings.alert.deleteAll.button.cancel" = "取消";
+
+// Footer
+"settings.footer.communityMessage" = "使用 #ferrey 分享您的照片，让您的作品脱颖而出！";
+
+// MARK: - Pro Card
+"proCard.badge" = "PRO";
+"proCard.title" = "解锁所有相机、特效和控制功能等等！";
+"proCard.button.pro" = "您已是 PRO 会员";
+"proCard.button.upgrade" = "升级到 Pro";
+
+// MARK: - Pro Screen
+"proScreen.proBadge" = "PRO";
+"proScreen.feature1" = "解锁所有相机、特效和控制功能";
+"proScreen.feature2" = "高级相机设置与导入";
+"proScreen.feature3" = "未来的功能更新";
+"proScreen.loading" = "加载中...";
+"proScreen.unavailable" = "不可用";
+"proScreen.paymentDisclaimer" = "付款将从您的 iTunes 帐户中扣除。除非在当前订阅期结束前 24 小时关闭，否则订阅将自动续订。可在“帐户设置”中管理。";
+"proScreen.termsLink" = "条款";
+"proScreen.privacyLink" = "隐私";
+"proScreen.restoreLink" = "恢复";
+"proScreen.monthly" = "月度";
+"proScreen.lifetime" = "终身";
+"proScreen.trialButton" = "开始7天免费试用";
+"proScreen.purchaseButton" = "购买";
+
+
+// MARK: - Gallery View
+"gallery.title" = "图库";
+"gallery.share" = "分享";
+"gallery.cancel" = "取消";
+"gallery.delete" = "删除";
+"gallery.selected.delete" = "删除所选照片？";
+"gallery.current.delete" = "删除这张照片吗？";
+
+"editor.filter" = "滤镜";
+"editor.texture" = "纹理";
+"editor.light" = "光";
+"filter.sample" = "样例";
+
+// MARK: - Swift Rater
+"swiftRater.appName" = "Ferrey";
+"swiftRater.alertTitle" = "喜欢%@吗？";
+"swiftRater.alertMessage" = "喜欢和我们一起创造美好时刻吗？轻点星星在 App Store 上为我们评分。";
+"swiftRater.alertCancelTitle" = "不用了";
+"swiftRater.alertRateTitle" = "立即评分";
+"swiftRater.alertRateLaterTitle" = "稍后提醒";

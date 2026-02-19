@@ -1,0 +1,92 @@
+/* Localizable.strings (French)
+ Ferrey
+ */
+
+// MARK: - Settings View
+"settings.title" = "Réglages";
+"settings.plan" = "Abonnement";
+"settings.plan.pro" = "Pro";
+"settings.plan.free" = "Gratuit";
+"settings.restorePurchase" = "Restaurer l'achat";
+"settings.appVersion" = "Version de l'app";
+
+// Sections
+"settings.section.capture" = "Capture";
+"settings.section.library" = "Bibliothèque et Enregistrement";
+"settings.section.interface" = "Interface";
+"settings.section.storage" = "Stockage";
+"settings.section.legal" = "Légal";
+"settings.section.about" = "À propos";
+
+// Toggles
+"settings.toggle.flash" = "Flash activé par défaut";
+// Spanish
+"settings.toggle.volumeShutter" = "Capture avec volume +/−";            
+"settings.toggle.selfieMirroring" = "Désactiver l'effet miroir des selfies";
+"settings.toggle.autoSave" = "Enregistrement auto. dans la photothèque";
+"settings.toggle.livePreview" = "Aperçu du filtre en direct";
+"settings.toggle.gridOverlay" = "Grille en superposition";
+"settings.toggle.hideLogo" = "Masquer le logo";
+
+// Buttons & Links
+"settings.button.deleteAll" = "Supprimer toutes les photos";
+"settings.link.terms" = "Conditions d'utilisation";
+"settings.link.privacy" = "Politique de confidentialité";
+"settings.link.aboutUs" = "À propos de nous";
+"settings.link.instagram" = "Suivez-nous sur Instagram";
+"settings.link.rateUs" = "Évaluez-nous";
+
+// Alerts
+"settings.alert.deleteAll.title" = "Supprimer toutes les photos ?";
+"settings.alert.deleteAll.message" = "Cette action est irréversible. Toutes les photos enregistrées dans l'application seront supprimées définitivement.";
+"settings.alert.deleteAll.button.delete" = "Supprimer";
+"settings.alert.deleteAll.button.cancel" = "Annuler";
+
+// Footer
+"settings.footer.communityMessage" = "Partagez vos photos avec #ferrey pour être découvert et mettre en valeur vos créations !";
+
+// MARK: - Pro Card
+"proCard.badge" = "PRO";
+"proCard.title" = "Débloquez tous les appareils photo, effets et contrôles et bien plus encore !";
+"proCard.button.pro" = "Vous êtes PRO";
+"proCard.button.upgrade" = "Passer à Pro";
+
+// MARK: - Pro Screen
+"proScreen.proBadge" = "PRO";
+"proScreen.feature1" = "Débloquez tous les appareils photo, effets et contrôles";
+"proScreen.feature2" = "Réglages avancés de l'appareil photo et importation";
+"proScreen.feature3" = "Mises à jour des fonctionnalités à venir";
+"proScreen.loading" = "Chargement...";
+"proScreen.unavailable" = "Indisponible";
+"proScreen.paymentDisclaimer" = "Le paiement est débité de votre compte iTunes. Les abonnements se renouvellent automatiquement sauf s'ils sont désactivés 24h avant la fin de la période. Gérez dans les Réglages du compte.";
+"proScreen.termsLink" = "Conditions";
+"proScreen.privacyLink" = "Confidentialité";
+"proScreen.restoreLink" = "Restaurer";
+"proScreen.monthly" = "Mensuel";
+"proScreen.lifetime" = "À vie";
+"proScreen.trialButton" = "Commencer l’essai gratuit de 7 jours";
+"proScreen.purchaseButton" = "Acheter";
+
+
+// MARK: - Gallery View
+"gallery.title" = "Galerie";
+"gallery.share" = "Partager";
+"gallery.cancel" = "Annuler";
+"gallery.delete" = "Supprimer";
+"gallery.selected.delete" = "Supprimer les photos sélectionnées ?";
+"gallery.current.delete" = "Supprimer cette photo ?";
+
+
+"editor.filter" = "Filtre";
+"editor.texture" = "Texture";
+"editor.light" = "Lumière";
+"filter.sample" = "Exemples";
+
+// MARK: - Swift Rater
+"swiftRater.appName" = "Ferrey";
+"swiftRater.alertTitle" = "Vous aimez %@ ?";
+"swiftRater.alertMessage" = "Aimez-vous créer des moments avec nous ? Touchez les étoiles pour nous noter sur l’App Store.";
+"swiftRater.alertCancelTitle" = "Non merci";
+"swiftRater.alertRateTitle" = "Noter maintenant";
+"swiftRater.alertRateLaterTitle" = "Me le rappeler plus tard";
+
