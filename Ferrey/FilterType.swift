@@ -59,13 +59,15 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     
     // MARK: - Filter ENUM
     
-    case normal, apeninos, asf, bandw, f7x, luxury, terra
+    case normal, t32, t32preset, apeninos, asf, bandw, f7x, luxury, terra
     
     // MARK: - Filter NAME
     
     var title: String {
         switch self {
             case .normal: return "Normal"
+            case .t32: return "T32"
+            case .t32preset: return "T32Preset"
             case .apeninos: return "Apeninos"
             case .asf: return "ASF"
             case .bandw: return "B&W"
@@ -81,7 +83,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     
     var isPro: Bool {
         switch self {
-            case .normal, .apeninos, .asf:
+            case .normal, .t32, .t32preset, .apeninos, .asf:
                 return false
             case .bandw, .f7x, .luxury, .terra:
                 return true
@@ -93,6 +95,8 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     var samples: [String] {
         switch self {
             case .normal: return ["normal_1"]
+            case .t32: return ["apeninos_1", "apeninos_2"]
+            case .t32preset: return ["apeninos_1", "apeninos_2"]
             case .apeninos: return ["apeninos_1", "apeninos_2"]
             case .asf: return ["asf_1", "asf_2"]
             case .bandw: return ["bandw_1", "bandw_2"]
@@ -183,7 +187,12 @@ struct FilterUtils {
     }
     
     private static func lutFileName(for type: FilterType) -> String? {
-        switch type { case .normal: return nil; default: return type.title }
+        switch type {
+            case .normal: return nil
+            case .t32: return "T32"
+            case .t32preset: return "T32 (+ color preset)"
+            default: return type.title
+        }
     }
     
     private static func parseCubeFile(at url: URL) -> (dimension: Int, data: Data)? {
