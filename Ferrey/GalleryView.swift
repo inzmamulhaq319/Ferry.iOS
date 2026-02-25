@@ -228,6 +228,7 @@ struct FullImageView: View {
     @State private var updateTask: Task<Void, Never>?
     @State private var filterRects: [FilterType: CGRect] = [:]
     @State private var ignoreScrollChange = false
+    @State private var isApplyingT32 = false
     
     private let filters: [FilterType] = FilterType.allCases
     
@@ -392,25 +393,35 @@ struct FullImageView: View {
                 .padding(.vertical)
                 
                 // MARK: - Main Image Pager
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(photoManager.photos.enumerated()), id: \.offset) { index, photo in
-                        ZStack {
-                            // Check if we are showing Original (Long Press) or Edited
-                            if let img = (showOriginal && index == currentIndex ? loadedOriginals[photo.id] : loadedImages[photo.id]) {
-                                ZoomableImageView(image: img)
-                                    .tag(index)
-                            } else {
-                                // Fallback placeholder only if something goes wrong
-                                ProgressView()
-                                    .tint(.white)
-                                    .tag(index)
+                ZStack {
+                    TabView(selection: $currentIndex) {
+                        ForEach(Array(photoManager.photos.enumerated()), id: \.offset) { index, photo in
+                            ZStack {
+                                // Check if we are showing Original (Long Press) or Edited
+                                if let img = (showOriginal && index == currentIndex ? loadedOriginals[photo.id] : loadedImages[photo.id]) {
+                                    ZoomableImageView(image: img)
+                                        .tag(index)
+                                } else {
+                                    // Fallback placeholder only if something goes wrong
+                                    ProgressView()
+                                        .tint(.white)
+                                        .tag(index)
+                                }
                             }
+                            .ignoresSafeArea()
                         }
-                        .ignoresSafeArea()
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .ignoresSafeArea()
+                    
+                    if isApplyingT32 {
+                        Color.black.opacity(0.35)
+                            .ignoresSafeArea()
+                        ProgressView()
+                            .tint(.white)
+                            .scaleEffect(1.2)
                     }
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .ignoresSafeArea()
                 .gesture(
                     LongPressGesture(minimumDuration: 0.15)
                         .onChanged { _ in
@@ -446,11 +457,15 @@ struct FullImageView: View {
                                             if storeManager.isPro { showFilterAdjustView = true }
                                             else { showProScreen = true }
                                         } else {
-                                            // Apply new filter to current image
-                                            if let newImage = photoManager.updateFilter(for: photoManager.photos[currentIndex].id, newFilter: filter) {
-                                                loadedImages[photoManager.photos[currentIndex].id] = newImage
-                                            }
+                                            let photoId = photoManager.photos[currentIndex].id
                                             selectedFilter = filter
+                                            if filter == .t32Update { isApplyingT32 = true }
+                                            photoManager.updateFilter(for: photoId, newFilter: filter) { newImage in
+                                                if let newImage = newImage {
+                                                    loadedImages[photoId] = newImage
+                                                }
+                                                isApplyingT32 = false
+                                            }
                                         }
                                     }) {
                                         VStack(spacing: 4) {

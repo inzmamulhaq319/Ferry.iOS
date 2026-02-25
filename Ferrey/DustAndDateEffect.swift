@@ -2,196 +2,244 @@
 //  DustAndDateEffect.swift
 //  Ferrey
 //
-//  Phase 4: Dust & Date effects. Dust = fine film-grain effect (reference-style).
-//  All effect logic lives here; FilterType remains unchanged.
-//
 
 import Foundation
 import UIKit
 import CoreImage
 
-// MARK: - Dust and Date Effect Keys (UserDefaults)
-
 enum DustAndDateEffectKeys {
-    static let dustEnabled = "phase4DustEnabled"
-    static let dustIntensity = "phase4DustIntensity"
     static let dateEnabled = "phase4DateEnabled"
 }
-
-// MARK: - Dust and Date Effect Application
 
 enum DustAndDateEffectUtils {
     private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     
-    /// Apply dust (film grain) and optionally date when enabled. Call after filter pipeline.
-    /// Returns image with effects applied, or original if nothing enabled / on failure.
-    static func applyEffects(to image: UIImage) -> UIImage? {
+    /// Applies vintage film overlay (grain + subtle dust) when filter is T32. Always on for T32, no toggle.
+    static func applyEffects(to image: UIImage, for filter: FilterType) -> UIImage? {
         var result = image
-        if Self.isDustEnabled(), let withDust = applyDustEffect(to: result, intensity: Self.dustIntensity()) {
-            result = withDust
+        if filter == .t32Update, let withEffect = applyDustEffect(to: result, intensity: 1.0) {
+            result = withEffect
         }
-        // Date effect: switch only for now; no rendering yet.
         return result
-    }
-    
-    /// Apply only if dust is enabled in settings (reads UserDefaults).
-    static func applyDustIfEnabled(to image: UIImage) -> UIImage? {
-        guard isDustEnabled() else { return nil }
-        return applyDustEffect(to: image, intensity: dustIntensity())
-    }
-    
-    static func isDustEnabled() -> Bool {
-        UserDefaults.standard.bool(forKey: DustAndDateEffectKeys.dustEnabled)
-    }
-    
-    static func dustIntensity() -> Double {
-        let v = UserDefaults.standard.double(forKey: DustAndDateEffectKeys.dustIntensity)
-        if v == 0 { return 0.2 }
-        return max(0, min(1, v))
     }
     
     static func isDateEnabled() -> Bool {
         UserDefaults.standard.bool(forKey: DustAndDateEffectKeys.dateEnabled)
     }
     
-    // MARK: - Dust effect (luminance-only grain + micro dust)
-    
-//    / (1) 35mm film grain, luminance-only; midtone density +10–15%, highlights clean, shadows natural. (2) Extremely subtle tonal micro-variation on flat surfaces to reduce digital smoothness. (3) Micro dust overlay. No contrast/color/exposure/sharpness change, no new dust. Micro-refinement pass. Preserves resolution.
-//    / (1) 35mm film grain (High Quality): Scaled Luma Noise, Overlay Blend. (2) T32 Color Grading.
-    
+    /// Sharpness → grain (medium, visible) → slight contrast. No grain blur.
     static func applyDustEffect(to image: UIImage, intensity: Double) -> UIImage? {
         guard let ciImage = CIImage(image: image.fixedOrientation()) else { return nil }
         let extent = ciImage.extent
-        let grainStrength = 0.2 + (intensity * 0.3) // Stronger base for visibility
         
-        // ---------------------------------------------------------
-        // 1. High-Fidelity 35mm Grain (Refined: Finer & Sharper)
-        // ---------------------------------------------------------
-        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
-        
-        // Whitening (Monochrome Noise)
-        let monoNoise = noise.applyingFilter("CIColorMonochrome", parameters: [
-            "inputColor": CIColor(red: 0.5, green: 0.5, blue: 0.5),
-            "inputIntensity": 1.0
-        ])
-        
-        // Scale: Keep it tight (1.0) for fine 35mm texture (Reference Image 1 style)
-        // No blur: Keep it crisp/sharp.
-        let scaledNoise = monoNoise.transformed(by: CGAffineTransform(scaleX: 1.0, y: 1.0))
-            .cropped(to: extent)
-        
-        // Contrast Boost for visibility
-        let contrastGrain = scaledNoise.applyingFilter("CIColorControls", parameters: [
-            "inputContrast": 1.6, // Slight boost for visibility
-            "inputBrightness": 0.0,
-            "inputSaturation": 0.0
-        ])
-        
-        // Match Reference Image 1: Fine, sharp grain.
-        // Micro-adjustment: Reduce highlight visibility ~5%, add organic irregularity.
-        
-        // Highlight Masking: Grain distinct in Mids/Shadows, less in Highlights
-        let luma = ciImage.applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: 0.2126, y: 0.2126, z: 0.2126, w: 0),
-            "inputGVector": CIVector(x: 0.7152, y: 0.7152, z: 0.7152, w: 0),
-            "inputBVector": CIVector(x: 0.0722, y: 0.0722, z: 0.0722, w: 0),
-            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
-        ])
-        
-        // Mask: 1.0 in shadows/mids, fading to 0.0 in pure white
-        // Adjustment: Reduce highlight visibility by ~5% (Bias 1.0 -> 0.95 in bright areas? tricky).
-        // Standard Invert: (1 - Luma). To reduce grain in highlights even more, we want (1 - Luma) to be smaller when Luma is high.
-        // Actually, just changing the bias from 1.0 to 0.95 reduces the CEILING of the mask, meaning even shadows get 5% less grain?
-        // No, we want to cut highlights more.
-        // Let's use a steeper curve or just shift the bias slightly.
-        // Current: Out = 1.0 - Luma.
-        // Target: Out = 0.95 - Luma? No, that reduces everywhere.
-        // Target: Out = 1.0 - (Luma * 1.05)? Pushes whites to negative (clamped to 0).
-        // Let's just adjust the bias to 0.95 as a safe "overall 5% reduction including highlights" which satisfies "reduce highlight visibility" (and everything else slightly).
-        // User said: "Very slightly reduce grain visibility in highlight areas (approximately 5%)".
-        // Let's try: Out = 1.05 - (Luma * 1.1).
-        // Luma 0.0 -> 1.05 (Clamped 1.0). Shadows Safe.
-        // Luma 1.0 -> -0.05 (Clamped 0.0). Highlights Cleaner.
-        
-        let mask = luma.applyingFilter("CIColorMatrix", parameters: [
-            "inputRVector": CIVector(x: -1.05, y: 0, z: 0, w: 0),
-            "inputGVector": CIVector(x: -1.05, y: 0, z: 0, w: 0),
-            "inputBVector": CIVector(x: -1.05, y: 0, z: 0, w: 0),
-            "inputBiasVector": CIVector(x: 1.0, y: 1.0, z: 1.0, w: 0) // Keep 1.0 anchor for midtones, but the steeper slope cuts highlights faster.
-        ])
-        
-        // Organic Irregularity: Use a low-freq noise to modulate the mask
-        // Generate a large-scale noise pattern
-        guard let irregularityNoise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
-        let organicMap = irregularityNoise
-            .applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 50.0]) // Heavy blur for large blotches
-            .cropped(to: extent)
-            .applyingFilter("CIColorControls", parameters: [
-                "inputContrast": 0.2, // Very low contrast (subtle variation)
-                "inputBrightness": 0.0,
-                "inputSaturation": 0.0
-            ])
-            // Shift range to [0.8, 1.0] so it only reduces grain slightly, never adds
-            .applyingFilter("CIColorMatrix", parameters: [
-                "inputRVector": CIVector(x: 1.0, y: 0, z: 0, w: 0), // Pass through gray
-                "inputGVector": CIVector(x: 1.0, y: 0, z: 0, w: 0),
-                "inputBVector": CIVector(x: 1.0, y: 0, z: 0, w: 0),
-                "inputBiasVector": CIVector(x: 0.4, y: 0.4, z: 0.4, w: 0) // Shift up? Noise is 0.5 +/-.
-                // We want avg ~0.9.
-            ])
-            
-        // Combine Luma Mask * Organic Map
-        // Multiply filter
-        let irregularMask = CIFilter(name: "CIMultiplyCompositing", parameters: [
-            kCIInputImageKey: organicMap,
-            kCIInputBackgroundImageKey: mask
-        ])?.outputImage ?? mask
-        
-        // Blend Grain: Use Overlay for that "embedded" film look
-        guard let overlayBlend = CIFilter(name: "CIOverlayBlendMode") else { return nil }
-        overlayBlend.setValue(contrastGrain, forKey: kCIInputImageKey)
-        overlayBlend.setValue(ciImage, forKey: kCIInputBackgroundImageKey)
-        guard let grainResult = overlayBlend.outputImage else { return nil }
-        
-        // Mix based on Irregular Mask
-        let maskedGrain = CIFilter(name: "CIBlendWithMask", parameters: [
-            kCIInputImageKey: grainResult,
-            kCIInputBackgroundImageKey: ciImage,
-            kCIInputMaskImageKey: irregularMask
-        ])?.outputImage ?? grainResult
-        
-        let finalGrainyImage = maskedGrain
-        
-        // ---------------------------------------------------------
-        // 2. Color Grading (LUT: T32 (+ color preset))
-        // ---------------------------------------------------------
-        
-        var finalOutput = finalGrainyImage
-        
-        // Apply "Filter2"
-        if let lutFilter = createLUTFilter(named: "Filter2") {
-            lutFilter.setValue(finalGrainyImage, forKey: kCIInputImageKey)
-            if let lutOutput = lutFilter.outputImage {
-                finalOutput = lutOutput
-            } else {
-                print("Warning: Filter2 LUT filter failed to produce output")
-            }
-        } else {
-            print("Warning: Could not load Filter2.cube")
+        var work = ciImage
+        if let sharpened = applyFilmStyleSharpness(photo: work, extent: extent) {
+            work = sharpened
         }
-         
-        guard let cgImage = ciContext.createCGImage(finalOutput, from: finalOutput.extent) else { return nil }
+        guard var withGrain = applyVintageFilmOverlay(photo: work, extent: extent, intensity: intensity) else {
+            return nil
+        }
+        // Slight contrast increase – grain zyada visible, reduce nahi
+        if let withContrast = applySlightContrast(photo: withGrain) {
+            withGrain = withContrast
+        }
+        guard let cgImage = ciContext.createCGImage(withGrain, from: withGrain.extent) else { return nil }
         return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
     
-    // MARK: - Private Helpers (LUT Parsing)
+    /// Contrast halka barhaya – grain ko reduce nahi karta.
+    private static func applySlightContrast(photo: CIImage) -> CIImage? {
+        guard let color = CIFilter(name: "CIColorControls") else { return nil }
+        color.setValue(photo, forKey: kCIInputImageKey)
+        color.setValue(1.07, forKey: kCIInputContrastKey)  // slightly high contrast
+        return color.outputImage
+    }
     
-    // Helper to load LUT from Bundle (either root or LUTs folder)
-    private static func createLUTFilter(named name: String) -> CIFilter? {
-        // 1. Try LUTs subdirectory first (most likely location)
-        var url = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUTs")
+    /// Detail ke liye sharpness (kapre, bal numaya).
+    private static func applyFilmStyleSharpness(photo: CIImage, extent: CGRect) -> CIImage? {
+        guard let sharpen = CIFilter(name: "CISharpenLuminance") else { return nil }
+        sharpen.setValue(photo, forKey: kCIInputImageKey)
+        sharpen.setValue(0.45, forKey: kCIInputSharpnessKey)
+        return sharpen.outputImage?.cropped(to: extent)
+    }
+    
+    /// Cinematic film dust – organic, luminance-modulated, UV distortion. No blur, deep blacks preserved.
+    private static func applyVintageFilmOverlay(photo: CIImage, extent: CGRect, intensity: Double = 1.0) -> CIImage? {
+        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
         
-        // 2. Try root bundle if not found
+        // +25% scale: chunkier particles, lower frequency – match reference density
+        let grainScale: CGFloat = 1.36  // 1.09 * 1.25
+        let scaledNoise = noise.transformed(by: CGAffineTransform(scaleX: grainScale, y: grainScale))
+            .cropped(to: extent)
+        
+        // Luminance-only base grain
+        let grainLuma = scaledNoise.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputGVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputBVector": CIVector(x: 0.2126, y: 0.7152, z: 0.0722, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ]).cropped(to: extent)
+        
+        // Low-frequency modulation – slightly reduced for chunkier feel
+        let lowFreqScale: CGFloat = 0.038
+        let lowFreqNoise = noise.transformed(by: CGAffineTransform(scaleX: lowFreqScale, y: lowFreqScale))
+            .cropped(to: extent)
+        let lowFreqLuma = lowFreqNoise.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ]).cropped(to: extent)
+        
+        // Irregular distortion: noise at 0.6 freq, amplitude 0.012 – raw, organic
+        let distortScale: CGFloat = 0.6
+        let distortNoise = noise.transformed(by: CGAffineTransform(scaleX: distortScale, y: distortScale))
+            .cropped(to: extent)
+        let distortLuma = distortNoise.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputGVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputBVector": CIVector(x: 1, y: 0, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ]).cropped(to: extent)
+        
+        // Micro-contrast pow(0.78), stronger shadow integration, increased irregular distortion
+        guard let grainKernel = CIColorKernel(source: """
+            kernel vec4 remapGrainForOverlay(__sample base, __sample n, __sample lowFreq, __sample distort) {
+                float g = (n.r - 0.5) * 0.62 + 0.5;
+                float mod = 0.72 + 0.28 * lowFreq.r;
+                g = 0.5 + (g - 0.5) * mod;
+                float luma = dot(base.rgb, vec3(0.299, 0.587, 0.114));
+                float shadowBoost = smoothstep(0.0, 0.6, 1.0 - luma);
+                g *= mix(0.7, 1.15, shadowBoost);
+                g += (distort.r - 0.5) * 0.012;
+                g = clamp(g, 0.001, 1.0);
+                g = pow(g, 0.78);
+                return vec4(g, g, g, 1.0);
+            }
+        """) else { return photo }
+        let overlayGrain = grainKernel.apply(extent: extent, arguments: [photo, grainLuma, lowFreqLuma, distortLuma]) ?? grainLuma
+        
+        // Overlay blend = authentic film grain (highlights brighten, shadows darken)
+        let overlay = CIFilter(name: "CIOverlayBlendMode")!
+        overlay.setValue(overlayGrain, forKey: kCIInputImageKey)
+        overlay.setValue(photo, forKey: kCIInputBackgroundImageKey)
+        guard var withGrain = overlay.outputImage?.cropped(to: extent) else { return photo }
+        
+        // 100% grain show – filter apply hote hi full grain
+        let amount = 1.0
+        let blend = CIFilter(name: "CIDissolveTransition")!
+        blend.setValue(photo, forKey: kCIInputImageKey)
+        blend.setValue(withGrain, forKey: kCIInputTargetImageKey)
+        blend.setValue(amount, forKey: kCIInputTimeKey)
+        return blend.outputImage?.cropped(to: extent)
+    }
+    
+    /// 35mm-style: bahut halka dust/specks – film imperfections jaisa
+    private static func applySubtleDustTexture(photo: CIImage, extent: CGRect, intensity: Double) -> CIImage? {
+        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
+        let scale = max(0.0, min(1.0, intensity)) * 0.28  // 35mm – halka hi
+        
+        let scaledNoise = noise.transformed(by: CGAffineTransform(scaleX: 1.15, y: 1.15))
+            .cropped(to: extent)
+        
+        let mono = scaledNoise.applyingFilter("CIColorMatrix", parameters: [
+            "inputRVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+            "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+            "inputBVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+            "inputAVector": CIVector(x: 0, y: 0, z: 0, w: 1),
+            "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+        ]).cropped(to: extent)
+        
+        // 35mm: very sparse specks, soft values
+        guard let speckKernel = CIColorKernel(source: """
+            kernel vec4 subtleSpecks(__sample n, __sample img, float strength) {
+                float r = n.r;
+                float bright = step(0.98, r) * strength * 0.09;
+                float dark   = step(r, 0.02) * strength * (-0.06);
+                vec3 add = vec3(bright + dark, bright + dark, bright + dark);
+                return vec4(clamp(img.rgb + add, 0.0, 1.0), img.a);
+            }
+        """) else { return photo }
+        let dustLayer = speckKernel.apply(extent: extent, arguments: [mono, photo, Float(scale)])
+        
+        guard let dusted = dustLayer else { return photo }
+        // 35mm: zyada original, halka dust
+        let dustBlend = CIFilter(name: "CIDissolveTransition")!
+        dustBlend.setValue(photo, forKey: kCIInputImageKey)
+        dustBlend.setValue(dusted, forKey: kCIInputTargetImageKey)
+        dustBlend.setValue(0.65, forKey: kCIInputTimeKey)  // 65% original
+        return dustBlend.outputImage?.cropped(to: extent)
+    }
+    
+    private static func applyDustEffectProcedural(ciImage: CIImage, extent: CGRect, intensity: Double, imageScale: CGFloat, imageOrientation: UIImage.Orientation) -> UIImage? {
+        // 1. Apply slight blur to the base photo (as requested)
+        let blurredPhoto = ciImage.applyingFilter("CIGaussianBlur", parameters: ["inputRadius": 1.0])
+            .cropped(to: extent)
+        
+        // 2. Generate Random Noise
+        guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
+        
+        // 3. Create Sparse Dust Specks (Procedural)
+        // We want very few, distinct white specks, not heavy grain.
+        // We scale the noise up so the specks are visible particles, not single pixels.
+        let scaledNoise = noise.transformed(by: CGAffineTransform(scaleX: 2.0, y: 2.0))
+        
+        let sparseDust = scaledNoise
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 1, z: 0, w: 0), // Use Green channel for randomness
+                "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                // Extremely high bias to threshold out almost all pixels, leaving only rare peaks
+                "inputBiasVector": CIVector(x: -0.9992, y: -0.9992, z: -0.9992, w: 0)
+            ])
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 1000, y: 0, z: 0, w: 0), // Amplify the remaining peaks to pure white
+                "inputGVector": CIVector(x: 0, y: 1000, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 1000, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+            ])
+            .cropped(to: extent)
+        
+        // 4. Create Very Subtle Scratches
+        // Vertical scaling to create lines, but very sparse
+        let scratches = noise
+            .transformed(by: CGAffineTransform(scaleX: 0.5, y: 40.0))
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 1, z: 0, w: 0),
+                "inputBiasVector": CIVector(x: -0.9995, y: -0.9995, z: -0.9995, w: 0) // Even sparser than dust
+            ])
+            .applyingFilter("CIColorMatrix", parameters: [
+                "inputRVector": CIVector(x: 500, y: 0, z: 0, w: 0),
+                "inputGVector": CIVector(x: 0, y: 500, z: 0, w: 0),
+                "inputBVector": CIVector(x: 0, y: 0, z: 500, w: 0),
+                "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
+            ])
+            .cropped(to: extent)
+        
+        // 5. Combine Dust and Scratches
+        let dustAndScratches = sparseDust.applyingFilter("CIScreenBlendMode", parameters: [
+            kCIInputBackgroundImageKey: scratches
+        ])
+        
+        // 6. Blend with Photo using Screen Mode
+        // Screen mode ensures white specks are added to the image without darkening it
+        let finalImage = dustAndScratches.applyingFilter("CIScreenBlendMode", parameters: [
+            kCIInputBackgroundImageKey: blurredPhoto
+        ])
+        
+        // 7. Output Result
+        guard let cgImage = ciContext.createCGImage(finalImage, from: extent) else { return nil }
+        return UIImage(cgImage: cgImage, scale: imageScale, orientation: imageOrientation)
+    }
+    
+    // Helper to load LUT (kept for reference or future use)
+    private static func createLUTFilter(named name: String) -> CIFilter? {
+        var url = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUTs")
         if url == nil {
             url = Bundle.main.url(forResource: name, withExtension: "cube")
         }

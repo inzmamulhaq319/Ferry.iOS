@@ -59,15 +59,14 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     
     // MARK: - Filter ENUM
     
-    case normal, t32, t32preset, apeninos, asf, bandw, f7x, luxury, terra
+    case normal, t32Update, apeninos, asf, bandw, f7x, luxury, terra
     
     // MARK: - Filter NAME
     
     var title: String {
         switch self {
             case .normal: return "Normal"
-            case .t32: return "T32"
-            case .t32preset: return "T32Preset"
+            case .t32Update: return "T32"
             case .apeninos: return "Apeninos"
             case .asf: return "ASF"
             case .bandw: return "B&W"
@@ -77,13 +76,20 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
         }
     }
     
-    var icon: Image { Image(self.title) } // Don't change
+    /// Asset name for filter icon (in Assets). Defaults to title; override per filter if needed.
+    private var iconAssetName: String {
+        switch self {
+            case .t32Update: return "icon t32"
+            default: return title
+        }
+    }
+    var icon: Image { Image(iconAssetName) }
     
     // MARK: - Filter Free/Pro
     
     var isPro: Bool {
         switch self {
-            case .normal, .t32, .t32preset, .apeninos, .asf:
+            case .normal, .t32Update, .apeninos, .asf:
                 return false
             case .bandw, .f7x, .luxury, .terra:
                 return true
@@ -95,8 +101,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     var samples: [String] {
         switch self {
             case .normal: return ["normal_1"]
-            case .t32: return ["apeninos_1", "apeninos_2"]
-            case .t32preset: return ["apeninos_1", "apeninos_2"]
+            case .t32Update: return ["apeninos_1", "apeninos_2"]
             case .apeninos: return ["apeninos_1", "apeninos_2"]
             case .asf: return ["asf_1", "asf_2"]
             case .bandw: return ["bandw_1", "bandw_2"]
@@ -189,8 +194,7 @@ struct FilterUtils {
     private static func lutFileName(for type: FilterType) -> String? {
         switch type {
             case .normal: return nil
-            case .t32: return "T32"
-            case .t32preset: return "T32 (+ color preset)"
+            case .t32Update: return "T32 update"
             default: return type.title
         }
     }
@@ -302,7 +306,7 @@ class PhotoManager: ObservableObject {
             textureIntensity: textureValue,
             exposureIntensity: exposureValue
         ) ?? original
-        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage) {
+        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: filter) {
             filteredImage = withEffects
         }
         
@@ -334,36 +338,54 @@ class PhotoManager: ObservableObject {
         }
     }
     
+    /// Sync version – can block main thread on T32. Prefer `updateFilter(for:newFilter:completion:)` for UI.
     func updateFilter(for id: String, newFilter: FilterType) -> UIImage? {
-        guard let index = photos.firstIndex(where: { $0.id == id }) else { return nil }
+        var result: UIImage?
+        let semaphore = DispatchSemaphore(value: 0)
+        updateFilter(for: id, newFilter: newFilter) { result = $0; semaphore.signal() }
+        semaphore.wait()
+        return result
+    }
+    
+    /// Apply new filter on background so UI stays responsive (T32 grain especially). Completion called on main.
+    func updateFilter(for id: String, newFilter: FilterType, completion: @escaping (UIImage?) -> Void) {
+        guard let index = photos.firstIndex(where: { $0.id == id }) else { completion(nil); return }
         let photo = photos[index]
-        if photo.filter == newFilter { return nil }
+        if photo.filter == newFilter { completion(nil); return }
         
-        // Remove ANY existing filtered files for this id (legacy patterns + current)
-        removeAllFilteredVariants(for: id)
+        let intensity = photo.filterIntensity
+        let texture = photo.textureIntensity
+        let exposure = photo.exposureIntensity
+        let origURL = originalURL(for: id)
+        let filteredURL = filteredURL(for: id, filter: newFilter)
         
-        guard let original = UIImage(contentsOfFile: originalURL(for: id).path) else { return nil }
-        
-        // MODIFIED: Call the updated filter function.
-        var filtered = FilterUtils.applyAdjustedFilter(
-            to: original,
-            with: newFilter,
-            filterIntensity: photo.filterIntensity,
-            textureIntensity: photo.textureIntensity,
-            exposureIntensity: photo.exposureIntensity
-        ) ?? original
-        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered) {
-            filtered = withEffects
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { completion(nil); return }
+            self.removeAllFilteredVariants(for: id)
+            guard let original = UIImage(contentsOfFile: origURL.path) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            var filtered = FilterUtils.applyAdjustedFilter(
+                to: original,
+                with: newFilter,
+                filterIntensity: intensity,
+                textureIntensity: texture,
+                exposureIntensity: exposure
+            ) ?? original
+            if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: newFilter) {
+                filtered = withEffects
+            }
+            if let data = filtered.jpegData(compressionQuality: 0.75) {
+                try? data.write(to: filteredURL)
+            }
+            DispatchQueue.main.async {
+                self.photos[index].filter = newFilter
+                self.photos[index].lastUpdated = Date()
+                self.save()
+                completion(filtered)
+            }
         }
-        
-        if let data = filtered.jpegData(compressionQuality: 0.75) {
-            try? data.write(to: filteredURL(for: id, filter: newFilter))
-        }
-        
-        photos[index].filter = newFilter
-        photos[index].lastUpdated = Date()
-        save()
-        return filtered
     }
     
     // MODIFIED: Renamed `exposureAdjustment` to `exposureIntensity` to reflect its new purpose.
@@ -387,7 +409,7 @@ class PhotoManager: ObservableObject {
             textureIntensity: textureIntensity,
             exposureIntensity: exposureIntensity
         ) ?? original
-        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered) {
+        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: photo.filter) {
             filtered = withEffects
         }
         

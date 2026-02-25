@@ -34,9 +34,7 @@ struct SettingsView: View {
     
     @AppStorage("volumeShutterEnabled")   private var volumeShutterEnabled: Bool    = false
     
-    // Phase 4: Dust & Date (single dust slider, no separate grain)
-    @AppStorage(DustAndDateEffectKeys.dustEnabled)   private var phase4DustEnabled: Bool       = false
-    @AppStorage(DustAndDateEffectKeys.dustIntensity) private var phase4DustIntensity: Double   = 0.2
+    // Phase 4: Dust & Date (T32 film overlay always applies; only date stamp is toggleable)
     @AppStorage(DustAndDateEffectKeys.dateEnabled)   private var phase4DateEnabled: Bool        = false
     
     var body: some View {
@@ -94,24 +92,8 @@ struct SettingsView: View {
                     lockedToggle("settings.toggle.hideLogo", isOn: $hideLogoEnabled)
                 }
                 
-                // MARK: — Phase 4: Dust & Date (one dust intensity slider only)
+                // MARK: — Phase 4: Dust & Date
                 Section(header: Text("settings.section.dustAndDate")) {
-                    Toggle("settings.toggle.dustEffect", isOn: $phase4DustEnabled)
-                    if phase4DustEnabled {
-                        HStack(alignment: .center, spacing: 8) {
-                            Text("settings.slider.dustIntensity")
-                                .foregroundColor(.primary)
-                                .lineLimit(1)
-                            Slider(value: $phase4DustIntensity, in: 0.0...1.0, step: 0.05)
-                                .tint(.white)
-                                .frame(maxWidth: 200)
-                            Text("\(Int(phase4DustIntensity * 100))%")
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(.secondary)
-                                .frame(minWidth: 28, alignment: .trailing)
-                                .lineLimit(1)
-                        }
-                    }
                     Toggle("settings.toggle.dateStamp", isOn: $phase4DateEnabled)
                 }
                 
