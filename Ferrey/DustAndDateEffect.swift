@@ -14,11 +14,34 @@ enum DustAndDateEffectKeys {
 enum DustAndDateEffectUtils {
     private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
     
-    /// Applies vintage film overlay (grain + subtle dust) when filter is T32. Always on for T32, no toggle.
-    static func applyEffects(to image: UIImage, for filter: FilterType) -> UIImage? {
+    /// Cached once so grain kernel is not recompiled on every apply – keeps T32 instant.
+    private static let grainKernel: CIColorKernel? = {
+        CIColorKernel(source: """
+            kernel vec4 remapGrainForOverlay(__sample base, __sample n, __sample lowFreq, __sample distort) {
+                float g = (n.r - 0.5) * 0.62 + 0.5;
+                float mod = 0.72 + 0.28 * lowFreq.r;
+                g = 0.5 + (g - 0.5) * mod;
+                float luma = dot(base.rgb, vec3(0.299, 0.587, 0.114));
+                float shadowBoost = smoothstep(0.0, 0.6, 1.0 - luma);
+                g *= mix(0.7, 1.15, shadowBoost);
+                g += (distort.r - 0.5) * 0.012;
+                g = clamp(g, 0.001, 1.0);
+                g = pow(g, 0.78);
+                return vec4(g, g, g, 1.0);
+            }
+        """)
+    }()
+    
+    /// Applies T32 film dust when filter is T32. Date is drawn as draggable overlay in UI, not baked here.
+    /// logTiming: false when called from background prefetch (sirf user apply par time print ho).
+    static func applyEffects(to image: UIImage, for filter: FilterType, logTiming: Bool = true) -> UIImage? {
         var result = image
-        if filter == .t32Update, let withEffect = applyDustEffect(to: result, intensity: 1.0) {
-            result = withEffect
+        if filter == .t32Update {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            if let withEffect = applyDustEffect(to: result, intensity: 1.0) {
+                result = withEffect
+                if logTiming { print(String(format: "[T32] dust/grain: %.2f s", CFAbsoluteTimeGetCurrent() - t0)) }
+            }
         }
         return result
     }
@@ -27,24 +50,37 @@ enum DustAndDateEffectUtils {
         UserDefaults.standard.bool(forKey: DustAndDateEffectKeys.dateEnabled)
     }
     
-    /// Sharpness → grain (medium, visible) → slight contrast. No grain blur.
+    /// Scale: 0.4 = finer grain + clarity; zyada low res se grain mota lagta tha.
+    private static let dustPipelineScale: CGFloat = 0.4
+    
+    /// Sharpness → grain (medium, visible) → slight contrast. No grain blur. Runs at half-res then upscales for speed.
     static func applyDustEffect(to image: UIImage, intensity: Double) -> UIImage? {
         guard let ciImage = CIImage(image: image.fixedOrientation()) else { return nil }
-        let extent = ciImage.extent
+        let fullExtent = ciImage.extent
+        let scaleFactor = dustPipelineScale
+        let scaledExtent = CGRect(x: 0, y: 0, width: fullExtent.width * scaleFactor, height: fullExtent.height * scaleFactor)
+        let scaledInput = ciImage.transformed(by: CGAffineTransform(scaleX: scaleFactor, y: scaleFactor)).cropped(to: scaledExtent)
         
-        var work = ciImage
-        if let sharpened = applyFilmStyleSharpness(photo: work, extent: extent) {
+        var work = scaledInput
+        if let sharpened = applyFilmStyleSharpness(photo: work, extent: scaledExtent) {
             work = sharpened
         }
-        guard var withGrain = applyVintageFilmOverlay(photo: work, extent: extent, intensity: intensity) else {
+        guard var withGrain = applyVintageFilmOverlay(photo: work, extent: scaledExtent, intensity: intensity) else {
             return nil
         }
-        // Slight contrast increase – grain zyada visible, reduce nahi
         if let withContrast = applySlightContrast(photo: withGrain) {
             withGrain = withContrast
         }
-        guard let cgImage = ciContext.createCGImage(withGrain, from: withGrain.extent) else { return nil }
-        return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
+        guard let cgImageHalf = ciContext.createCGImage(withGrain, from: withGrain.extent) else { return nil }
+        let fullSize = CGSize(width: fullExtent.width, height: fullExtent.height)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let renderer = UIGraphicsImageRenderer(size: fullSize, format: format)
+        let upscaled = renderer.image { _ in
+            UIImage(cgImage: cgImageHalf).draw(in: CGRect(origin: .zero, size: fullSize))
+        }
+        guard let cgFull = upscaled.cgImage else { return nil }
+        return UIImage(cgImage: cgFull, scale: image.scale, orientation: image.imageOrientation)
     }
     
     /// Contrast halka barhaya – grain ko reduce nahi karta.
@@ -59,7 +95,7 @@ enum DustAndDateEffectUtils {
     private static func applyFilmStyleSharpness(photo: CIImage, extent: CGRect) -> CIImage? {
         guard let sharpen = CIFilter(name: "CISharpenLuminance") else { return nil }
         sharpen.setValue(photo, forKey: kCIInputImageKey)
-        sharpen.setValue(0.45, forKey: kCIInputSharpnessKey)
+        sharpen.setValue(0.32, forKey: kCIInputSharpnessKey)
         return sharpen.outputImage?.cropped(to: extent)
     }
     
@@ -105,22 +141,9 @@ enum DustAndDateEffectUtils {
             "inputBiasVector": CIVector(x: 0, y: 0, z: 0, w: 0)
         ]).cropped(to: extent)
         
-        // Micro-contrast pow(0.78), stronger shadow integration, increased irregular distortion
-        guard let grainKernel = CIColorKernel(source: """
-            kernel vec4 remapGrainForOverlay(__sample base, __sample n, __sample lowFreq, __sample distort) {
-                float g = (n.r - 0.5) * 0.62 + 0.5;
-                float mod = 0.72 + 0.28 * lowFreq.r;
-                g = 0.5 + (g - 0.5) * mod;
-                float luma = dot(base.rgb, vec3(0.299, 0.587, 0.114));
-                float shadowBoost = smoothstep(0.0, 0.6, 1.0 - luma);
-                g *= mix(0.7, 1.15, shadowBoost);
-                g += (distort.r - 0.5) * 0.012;
-                g = clamp(g, 0.001, 1.0);
-                g = pow(g, 0.78);
-                return vec4(g, g, g, 1.0);
-            }
-        """) else { return photo }
-        let overlayGrain = grainKernel.apply(extent: extent, arguments: [photo, grainLuma, lowFreqLuma, distortLuma]) ?? grainLuma
+        // Micro-contrast pow(0.78), stronger shadow integration, increased irregular distortion (kernel cached for instant apply)
+        guard let kernel = grainKernel else { return photo }
+        let overlayGrain = kernel.apply(extent: extent, arguments: [photo, grainLuma, lowFreqLuma, distortLuma]) ?? grainLuma
         
         // Overlay blend = authentic film grain (highlights brighten, shadows darken)
         let overlay = CIFilter(name: "CIOverlayBlendMode")!
@@ -128,8 +151,8 @@ enum DustAndDateEffectUtils {
         overlay.setValue(photo, forKey: kCIInputBackgroundImageKey)
         guard var withGrain = overlay.outputImage?.cropped(to: extent) else { return photo }
         
-        // 100% grain show – filter apply hote hi full grain
-        let amount = 1.0
+        // Grain halka rakho taake image clarity rahe
+        let amount: CGFloat = 0.55
         let blend = CIFilter(name: "CIDissolveTransition")!
         blend.setValue(photo, forKey: kCIInputImageKey)
         blend.setValue(withGrain, forKey: kCIInputTargetImageKey)

@@ -32,6 +32,7 @@ struct ContentView: View {
     
     @State private var showNewFilterPopup = false
     @State private var newFilters: [FilterType] = []
+    @State private var isProcessingCapture = false
     
     private let flashAssetNames = ["flash_off", "flash_on", "flash_auto"]
     private let timerOptions: [Int] = [0, 3, 5]
@@ -122,13 +123,21 @@ struct ContentView: View {
                             
                             ZStack {
                                 CameraView(imageHandler: { rawImage in
-                                    Task {
-                                        PhotoManager.shared.addPhoto(original: rawImage, filter: selectedFilter)
+                                    if selectedFilter == .t32Update { isProcessingCapture = true }
+                                    PhotoManager.shared.addPhoto(original: rawImage, filter: selectedFilter) {
+                                        DispatchQueue.main.async { isProcessingCapture = false }
                                     }
                                 }, selectedFilter: selectedFilter, enableLiveFilter: livePreviewEnabled)
                                 
                                 if gridOverlayEnabled && storeManager.isPro {
                                     GridView()
+                                }
+                                if isProcessingCapture {
+                                    Color.black.opacity(0.35)
+                                        .ignoresSafeArea()
+                                    ProgressView()
+                                        .tint(.white)
+                                        .scaleEffect(1.2)
                                 }
                             }
                             .cornerRadius(30)

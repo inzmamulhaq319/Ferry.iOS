@@ -455,10 +455,14 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
                 print("Could not get image from photo data.")
                 return
             }
-            
             let currentAspectRatio = AspectRatio.forIndex(self.aspectIndex).ratio
-            let croppedImage = self.cropImageToAspect(image, aspect: currentAspectRatio) ?? image
-            
+            var viewBounds: CGRect = .zero
+            var innerRect: CGRect = .zero
+            DispatchQueue.main.sync {
+                viewBounds = self.metalView.bounds
+                innerRect = self.innerCropRect(for: currentAspectRatio, in: viewBounds)
+            }
+            let croppedImage = self.cropImageToAspect(image, aspect: currentAspectRatio, viewBounds: viewBounds, innerCropRect: innerRect) ?? image
             DispatchQueue.main.async {
                 self.imageHandler?(croppedImage)
             }
@@ -473,14 +477,11 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         }
     }
     
-    private func cropImageToAspect(_ image: UIImage, aspect: CGFloat) -> UIImage? {
-        let viewBounds = metalView.bounds
-        let innerCropRect = innerCropRect(for: aspect, in: viewBounds)
-        
+    /// Crop using pre-captured view rects (call from background; capture viewBounds/innerCropRect on main first).
+    private func cropImageToAspect(_ image: UIImage, aspect: CGFloat, viewBounds: CGRect, innerCropRect: CGRect) -> UIImage? {
         guard let cgImage = image.cgImage else { return nil }
         let imageSize = CGSize(width: cgImage.width, height: cgImage.height)
-        
-        let previewSize = metalView.bounds.size
+        let previewSize = viewBounds.size
         let imageAspect = imageSize.width / imageSize.height
         let previewAspect = previewSize.width / previewSize.height
         

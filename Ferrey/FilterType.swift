@@ -116,17 +116,56 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
 
 // MARK: - Centralized Filter Utilities
 
+// MARK: - T32 timing (remove or gate with #if DEBUG when done)
+private func t32Log(_ label: String, seconds: Double) {
+    print(String(format: "[T32] %@: %.2f s", label, seconds))
+}
+
 struct FilterUtils {
     static let context = CIContext(options: nil)
     
+    // T32 LUT cache: keep loaded for app lifetime so re-apply is instant. Populated in background.
+    private static let t32CacheLock = NSLock()
+    private static var t32CubeCache: (dimension: Int, data: Data)?
+    
+    /// Call at app launch to preload T32 (LUT + texture + grain/dust) in background; stays cached until app kill for instant apply.
+    static func warmUpT32InBackground() {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let t0 = CFAbsoluteTimeGetCurrent()
+            _ = createColorCubeFilter(for: .t32Update)
+            let size = CGSize(width: 64, height: 64)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            let tinyImage = renderer.image { ctx in
+                UIColor.darkGray.setFill()
+                ctx.fill(CGRect(origin: .zero, size: size))
+            }
+            var filtered = applyAdjustedFilter(
+                to: tinyImage,
+                with: .t32Update,
+                filterIntensity: 1.0,
+                textureIntensity: 1.0,
+                exposureIntensity: 0.5
+            )
+            if let img = filtered, let withDust = DustAndDateEffectUtils.applyEffects(to: img, for: .t32Update) {
+                _ = withDust
+            }
+            t32Log("warmup total", seconds: CFAbsoluteTimeGetCurrent() - t0)
+        }
+    }
+    
     // MODIFIED: Simplified the function to use a single `exposureIntensity` parameter.
+    /// logT32Timing: false when prefetch (sirf user apply par time print ho).
     static func applyAdjustedFilter(
         to image: UIImage,
         with type: FilterType,
         filterIntensity: Double,
         textureIntensity: Double,
-        exposureIntensity: Double
+        exposureIntensity: Double,
+        logT32Timing: Bool = true
     ) -> UIImage? {
+        let t0 = (type == .t32Update && logT32Timing) ? CFAbsoluteTimeGetCurrent() : 0
         guard let ciImage = CIImage(image: image.fixedOrientation()) else { return nil }
         var processed = ciImage
         
@@ -162,10 +201,40 @@ struct FilterUtils {
         processed = exposureFilter.outputImage ?? processed
         
         guard let cgImage = context.createCGImage(processed, from: processed.extent) else { return nil }
+        if type == .t32Update && logT32Timing && t0 > 0 {
+            t32Log("LUT+texture+render", seconds: CFAbsoluteTimeGetCurrent() - t0)
+        }
         return UIImage(cgImage: cgImage, scale: image.scale, orientation: image.imageOrientation)
     }
     
     static func createColorCubeFilter(for type: FilterType) -> CIFilter? {
+        if type == .t32Update {
+            let cached: (dimension: Int, data: Data)? = {
+                t32CacheLock.lock()
+                defer { t32CacheLock.unlock() }
+                return t32CubeCache
+            }()
+            if let c = cached {
+                guard let filter = CIFilter(name: "CIColorCubeWithColorSpace") else { return nil }
+                filter.setValue(c.dimension, forKey: "inputCubeDimension")
+                filter.setValue(c.data, forKey: "inputCubeData")
+                filter.setValue(CGColorSpace(name: CGColorSpace.sRGB)!, forKey: "inputColorSpace")
+                return filter
+            }
+            guard let name = lutFileName(for: type),
+                  let url = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUTs"),
+                  let parsed = parseCubeFile(at: url) else {
+                return nil
+            }
+            t32CacheLock.lock()
+            t32CubeCache = parsed
+            t32CacheLock.unlock()
+            guard let filter = CIFilter(name: "CIColorCubeWithColorSpace") else { return nil }
+            filter.setValue(parsed.dimension, forKey: "inputCubeDimension")
+            filter.setValue(parsed.data, forKey: "inputCubeData")
+            filter.setValue(CGColorSpace(name: CGColorSpace.sRGB)!, forKey: "inputColorSpace")
+            return filter
+        }
         guard let name = lutFileName(for: type),
               let url = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUTs"),
               let (dimension, cubeData) = parseCubeFile(at: url) else {
@@ -261,6 +330,78 @@ class PhotoManager: ObservableObject {
     
     private let photosKey = "savedPhotos"
     
+    /// T32 result cache: aik bar load ho to session bhar reuse, bar bar load nahi. LRU + size limit taake memory/energy theek rahe.
+    private var t32ResultCache: [String: UIImage] = [:]
+    private var t32CacheOrder: [String] = []
+    private let t32CacheLock = NSLock()
+    private let t32CacheMaxCount = 5
+    
+    /// Call when user goes back (e.g. leaves gallery) so next time T32 can load fresh.
+    func clearT32SessionCache() {
+        t32CacheLock.lock()
+        t32ResultCache.removeAll()
+        t32CacheOrder.removeAll()
+        t32CacheLock.unlock()
+    }
+    
+    /// Returns true if T32 result is cached for this photo + intensities (so apply will be instant, no loader needed).
+    func hasCachedT32(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double) -> Bool {
+        t32CacheLock.lock()
+        let key = t32CacheKey(id: id, fi: filterIntensity, ti: textureIntensity, ei: exposureIntensity)
+        let has = t32ResultCache[key] != nil
+        t32CacheLock.unlock()
+        return has
+    }
+    
+    /// Cache mein daalte waqt jagah na ho to purani (LRU) entry hata do.
+    private func t32CacheEvictIfNeeded(beforeAddingKey newKey: String) {
+        guard t32ResultCache[newKey] == nil else { return }
+        while t32CacheOrder.count >= t32CacheMaxCount, let oldest = t32CacheOrder.first {
+            t32CacheOrder.removeFirst()
+            t32ResultCache.removeValue(forKey: oldest)
+        }
+    }
+    
+    /// Gallery open hone par ya photo switch par call karo – agar cache mein nahi to ek bar load karke cache kar do; dobara load nahi, memory limit se purani hata di jati hai.
+    func prefetchT32IfNeeded(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double) {
+        let key = t32CacheKey(id: id, fi: filterIntensity, ti: textureIntensity, ei: exposureIntensity)
+        let alreadyCached: Bool = {
+            t32CacheLock.lock()
+            defer { t32CacheLock.unlock() }
+            return t32ResultCache[key] != nil
+        }()
+        if alreadyCached { return }
+        let origURL = originalURL(for: id)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self = self else { return }
+            guard let original = UIImage(contentsOfFile: origURL.path) else { return }
+            print("[T32 prefetch] grain started")
+            let t0 = CFAbsoluteTimeGetCurrent()
+            var filtered = FilterUtils.applyAdjustedFilter(
+                to: original,
+                with: .t32Update,
+                filterIntensity: filterIntensity,
+                textureIntensity: textureIntensity,
+                exposureIntensity: exposureIntensity,
+                logT32Timing: false
+            ) ?? original
+            if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: .t32Update, logTiming: false) {
+                filtered = withEffects
+            }
+            let elapsed = CFAbsoluteTimeGetCurrent() - t0
+            print(String(format: "[T32 prefetch] grain completed: %.2f s", elapsed))
+            self.t32CacheLock.lock()
+            self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+            self.t32ResultCache[key] = filtered
+            self.t32CacheOrder.append(key)
+            self.t32CacheLock.unlock()
+        }
+    }
+    
+    private func t32CacheKey(id: String, fi: Double, ti: Double, ei: Double) -> String {
+        "\(id)_\(fi)_\(ti)_\(ei)"
+    }
+    
     private init() {
         load()
         migrateAndCleanFilteredFiles() // <- removes old _filtered_ variants
@@ -292,49 +433,55 @@ class PhotoManager: ObservableObject {
         getDocumentsDirectory().appendingPathComponent("\(id)_filtered.jpg")
     }
     
-    func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true) {
+    /// Adds a photo with filter applied. Heavy work (LUT + dust) runs on background so UI stays responsive.
+    /// Completion is called on main when the new photo is in the list (use for loading indicator).
+    func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true, completion: (() -> Void)? = nil) {
         let id = UUID().uuidString
         let applyFullEffects = (filter != .normal)
         let textureValue = applyFullEffects ? 1.0 : 0.0
         let exposureValue = self.lastCapturedExposure
+        let origURL = originalURL(for: id)
+        let filtURL = filteredURL(for: id, filter: filter)
         
-        // MODIFIED: Call the updated filter function with the direct exposure value.
-        var filteredImage = FilterUtils.applyAdjustedFilter(
-            to: original,
-            with: filter,
-            filterIntensity: 1.0,
-            textureIntensity: textureValue,
-            exposureIntensity: exposureValue
-        ) ?? original
-        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: filter) {
-            filteredImage = withEffects
-        }
-        
-        if autoSaveEnabled && shouldAutoSave {
-            UIImageWriteToSavedPhotosAlbum(filteredImage, nil, nil, nil)
-        }
-        
-        if let data = original.jpegData(compressionQuality: 0.70) {
-            try? data.write(to: originalURL(for: id))
-        }
-        
-        // Always write ONE filtered copy
-        if let data = filteredImage.jpegData(compressionQuality: 0.70) {
-            try? data.write(to: filteredURL(for: id, filter: filter))
-        }
-        
-        let metadata = PhotoMetadata(
-            id: id,
-            filter: filter,
-            filterIntensity: 1.0,
-            textureIntensity: textureValue,
-            exposureIntensity: exposureValue
-        )
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.3)) {
-                self.photos.insert(metadata, at: 0)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { completion?(); return }
+            let t0 = filter == .t32Update ? CFAbsoluteTimeGetCurrent() : 0
+            var filteredImage = FilterUtils.applyAdjustedFilter(
+                to: original,
+                with: filter,
+                filterIntensity: 1.0,
+                textureIntensity: textureValue,
+                exposureIntensity: exposureValue
+            ) ?? original
+            if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: filter) {
+                filteredImage = withEffects
             }
-            self.save()
+            if filter == .t32Update && t0 > 0 {
+                t32Log("addPhoto total", seconds: CFAbsoluteTimeGetCurrent() - t0)
+            }
+            if self.autoSaveEnabled && shouldAutoSave {
+                UIImageWriteToSavedPhotosAlbum(filteredImage, nil, nil, nil)
+            }
+            if let data = original.jpegData(compressionQuality: 0.70) {
+                try? data.write(to: origURL)
+            }
+            if let data = filteredImage.jpegData(compressionQuality: 0.70) {
+                try? data.write(to: filtURL)
+            }
+            let metadata = PhotoMetadata(
+                id: id,
+                filter: filter,
+                filterIntensity: 1.0,
+                textureIntensity: textureValue,
+                exposureIntensity: exposureValue
+            )
+            DispatchQueue.main.async {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    self.photos.insert(metadata, at: 0)
+                }
+                self.save()
+                completion?()
+            }
         }
     }
     
@@ -348,6 +495,7 @@ class PhotoManager: ObservableObject {
     }
     
     /// Apply new filter on background so UI stays responsive (T32 grain especially). Completion called on main.
+    /// T32: first apply in session runs pipeline; subsequent switch-back to T32 uses cache (instant) until user leaves gallery.
     func updateFilter(for id: String, newFilter: FilterType, completion: @escaping (UIImage?) -> Void) {
         guard let index = photos.firstIndex(where: { $0.id == id }) else { completion(nil); return }
         let photo = photos[index]
@@ -357,7 +505,34 @@ class PhotoManager: ObservableObject {
         let texture = photo.textureIntensity
         let exposure = photo.exposureIntensity
         let origURL = originalURL(for: id)
-        let filteredURL = filteredURL(for: id, filter: newFilter)
+        let filtURL = filteredURL(for: id, filter: newFilter)
+        
+        if newFilter == .t32Update {
+            let key = t32CacheKey(id: id, fi: intensity, ti: texture, ei: exposure)
+            let cached: UIImage? = {
+                t32CacheLock.lock()
+                defer { t32CacheLock.unlock() }
+                guard let img = t32ResultCache[key] else { return nil }
+                t32CacheOrder.removeAll { $0 == key }
+                t32CacheOrder.append(key)
+                return img
+            }()
+            if let img = cached {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let self = self else { return }
+                    if let data = img.jpegData(compressionQuality: 0.75) {
+                        try? data.write(to: filtURL)
+                    }
+                    DispatchQueue.main.async {
+                        self.photos[index].filter = newFilter
+                        self.photos[index].lastUpdated = Date()
+                        self.save()
+                        completion(img)
+                    }
+                }
+                return
+            }
+        }
         
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { completion(nil); return }
@@ -366,6 +541,7 @@ class PhotoManager: ObservableObject {
                 DispatchQueue.main.async { completion(nil) }
                 return
             }
+            let t0 = newFilter == .t32Update ? CFAbsoluteTimeGetCurrent() : 0
             var filtered = FilterUtils.applyAdjustedFilter(
                 to: original,
                 with: newFilter,
@@ -376,8 +552,17 @@ class PhotoManager: ObservableObject {
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: newFilter) {
                 filtered = withEffects
             }
+            if newFilter == .t32Update && t0 > 0 {
+                t32Log("updateFilter total", seconds: CFAbsoluteTimeGetCurrent() - t0)
+                let key = self.t32CacheKey(id: id, fi: intensity, ti: texture, ei: exposure)
+                self.t32CacheLock.lock()
+                self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                self.t32ResultCache[key] = filtered
+                self.t32CacheOrder.append(key)
+                self.t32CacheLock.unlock()
+            }
             if let data = filtered.jpegData(compressionQuality: 0.75) {
-                try? data.write(to: filteredURL)
+                try? data.write(to: filtURL)
             }
             DispatchQueue.main.async {
                 self.photos[index].filter = newFilter
@@ -388,39 +573,57 @@ class PhotoManager: ObservableObject {
         }
     }
     
-    // MODIFIED: Renamed `exposureAdjustment` to `exposureIntensity` to reflect its new purpose.
-    func updateIntensities(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double) -> UIImage? {
-        guard let index = photos.firstIndex(where: { $0.id == id }) else { return nil }
+    /// Updates filter intensities; heavy work runs on background. Completion called on main with new image.
+    func updateIntensities(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double, completion: @escaping (UIImage?) -> Void) {
+        guard let index = photos.firstIndex(where: { $0.id == id }) else { completion(nil); return }
         var photo = photos[index]
         photo.filterIntensity = filterIntensity
         photo.textureIntensity = textureIntensity
-        // MODIFIED: Update the stored exposure intensity directly.
         photo.exposureIntensity = exposureIntensity
         photo.lastUpdated = Date()
-        photos[index] = photo
+        let filter = photo.filter
+        let origURL = originalURL(for: id)
+        let filtURL = filteredURL(for: id, filter: filter)
         
-        guard let original = UIImage(contentsOfFile: originalURL(for: id).path) else { return nil }
-        
-        // MODIFIED: Call the updated filter function with the new absolute intensity.
-        var filtered = FilterUtils.applyAdjustedFilter(
-            to: original,
-            with: photo.filter,
-            filterIntensity: filterIntensity,
-            textureIntensity: textureIntensity,
-            exposureIntensity: exposureIntensity
-        ) ?? original
-        if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: photo.filter) {
-            filtered = withEffects
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else { completion(nil); return }
+            guard let original = UIImage(contentsOfFile: origURL.path) else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            let t0 = filter == .t32Update ? CFAbsoluteTimeGetCurrent() : 0
+            var filtered = FilterUtils.applyAdjustedFilter(
+                to: original,
+                with: filter,
+                filterIntensity: filterIntensity,
+                textureIntensity: textureIntensity,
+                exposureIntensity: exposureIntensity
+            ) ?? original
+            if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: filter) {
+                filtered = withEffects
+            }
+            if filter == .t32Update && t0 > 0 {
+                t32Log("updateIntensities total", seconds: CFAbsoluteTimeGetCurrent() - t0)
+                let key = self.t32CacheKey(id: id, fi: filterIntensity, ti: textureIntensity, ei: exposureIntensity)
+                self.t32CacheLock.lock()
+                self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                self.t32ResultCache[key] = filtered
+                self.t32CacheOrder.append(key)
+                self.t32CacheLock.unlock()
+            }
+            self.removeAllFilteredVariants(for: id)
+            if let data = filtered.jpegData(compressionQuality: 0.75) {
+                try? data.write(to: filtURL)
+            }
+            DispatchQueue.main.async {
+                self.photos[index].filterIntensity = filterIntensity
+                self.photos[index].textureIntensity = textureIntensity
+                self.photos[index].exposureIntensity = exposureIntensity
+                self.photos[index].lastUpdated = Date()
+                self.save()
+                completion(filtered)
+            }
         }
-        
-        // Overwrite single filtered file
-        removeAllFilteredVariants(for: id)
-        if let data = filtered.jpegData(compressionQuality: 0.75) {
-            try? data.write(to: filteredURL(for: id, filter: photo.filter))
-        }
-        
-        save()
-        return filtered
     }
     
     func latestFilteredURL() -> URL? {
