@@ -180,7 +180,8 @@ struct FilterUtils {
             processed = transitionFilter.outputImage ?? processed
         }
         
-        if textureIntensity > 0 {
+        // Texture (noise overlay) sirf T32 par – baaki filters par grain/texture nahi.
+        if type == .t32Update && textureIntensity > 0 {
             let noise = CIFilter(name: "CIRandomGenerator")!.outputImage!
                 .applyingFilter("CIColorControls", parameters: [
                     "inputSaturation": 0,
@@ -321,6 +322,10 @@ struct PhotoMetadata: Codable, Identifiable, Equatable {
 
 class PhotoManager: ObservableObject {
     static let shared = PhotoManager()
+    /// Jab T32 result ready ho (addPhoto ya prefetch) – post with userInfo ["photoId": String]. View isse sun kar current photo refresh kare.
+    static let t32ResultReadyNotification = Notification.Name("T32ResultReady")
+    /// Recently captured T32 photo id – isko priority deni hai, baaki normal.
+    var lastAddedT32PhotoId: String?
     
     var lastCapturedExposure: Double = 0.5
     
@@ -335,6 +340,7 @@ class PhotoManager: ObservableObject {
     private var t32CacheOrder: [String] = []
     private let t32CacheLock = NSLock()
     private let t32CacheMaxCount = 5
+    private let t32PrefetchQueue = DispatchQueue(label: "com.ferrey.t32prefetch", qos: .userInitiated)
     
     /// Call when user goes back (e.g. leaves gallery) so next time T32 can load fresh.
     func clearT32SessionCache() {
@@ -344,13 +350,14 @@ class PhotoManager: ObservableObject {
         t32CacheLock.unlock()
     }
     
-    /// Returns true if T32 result is cached for this photo + intensities (so apply will be instant, no loader needed).
+    /// Returns true if T32 result is in memory ya disk (apply instant / load fast, loader avoid).
     func hasCachedT32(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double) -> Bool {
         t32CacheLock.lock()
         let key = t32CacheKey(id: id, fi: filterIntensity, ti: textureIntensity, ei: exposureIntensity)
-        let has = t32ResultCache[key] != nil
+        let inMemory = t32ResultCache[key] != nil
         t32CacheLock.unlock()
-        return has
+        if inMemory { return true }
+        return FileManager.default.fileExists(atPath: t32CacheFileURL(for: id).path)
     }
     
     /// Cache mein daalte waqt jagah na ho to purani (LRU) entry hata do.
@@ -362,44 +369,109 @@ class PhotoManager: ObservableObject {
         }
     }
     
-    /// Gallery open hone par ya photo switch par call karo – agar cache mein nahi to ek bar load karke cache kar do; dobara load nahi, memory limit se purani hata di jati hai.
+    /// T32: pehle memory, phir disk (t32_cache file) check; nahi mila to pipeline chala kar memory + disk par save. Ek bar run, phir reuse.
     func prefetchT32IfNeeded(for id: String, filterIntensity: Double, textureIntensity: Double, exposureIntensity: Double) {
         let key = t32CacheKey(id: id, fi: filterIntensity, ti: textureIntensity, ei: exposureIntensity)
-        let alreadyCached: Bool = {
+        let alreadyInMemory: Bool = {
             t32CacheLock.lock()
             defer { t32CacheLock.unlock() }
             return t32ResultCache[key] != nil
         }()
-        if alreadyCached { return }
+        if alreadyInMemory { return }
+        
+        let cacheFileURL = t32CacheFileURL(for: id)
+        if FileManager.default.fileExists(atPath: cacheFileURL.path),
+           let diskImage = UIImage(contentsOfFile: cacheFileURL.path) {
+            t32CacheLock.lock()
+            t32CacheEvictIfNeeded(beforeAddingKey: key)
+            t32ResultCache[key] = diskImage
+            t32CacheOrder.append(key)
+            t32CacheLock.unlock()
+            return
+        }
+        if id == lastAddedT32PhotoId {
+            return
+        }
+        
         let origURL = originalURL(for: id)
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        t32PrefetchQueue.async { [weak self] in
             guard let self = self else { return }
-            guard let original = UIImage(contentsOfFile: origURL.path) else { return }
-            print("[T32 prefetch] grain started")
-            let t0 = CFAbsoluteTimeGetCurrent()
-            var filtered = FilterUtils.applyAdjustedFilter(
-                to: original,
-                with: .t32Update,
-                filterIntensity: filterIntensity,
-                textureIntensity: textureIntensity,
-                exposureIntensity: exposureIntensity,
-                logT32Timing: false
-            ) ?? original
-            if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: .t32Update, logTiming: false) {
-                filtered = withEffects
+            let alreadyThere: Bool = {
+                self.t32CacheLock.lock()
+                defer { self.t32CacheLock.unlock() }
+                return self.t32ResultCache[key] != nil
+            }()
+            if alreadyThere { return }
+            if FileManager.default.fileExists(atPath: cacheFileURL.path),
+               let diskImage = UIImage(contentsOfFile: cacheFileURL.path) {
+                self.t32CacheLock.lock()
+                self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                self.t32ResultCache[key] = diskImage
+                self.t32CacheOrder.append(key)
+                self.t32CacheLock.unlock()
+                return
             }
-            let elapsed = CFAbsoluteTimeGetCurrent() - t0
-            print(String(format: "[T32 prefetch] grain completed: %.2f s", elapsed))
-            self.t32CacheLock.lock()
-            self.t32CacheEvictIfNeeded(beforeAddingKey: key)
-            self.t32ResultCache[key] = filtered
-            self.t32CacheOrder.append(key)
-            self.t32CacheLock.unlock()
+            guard let original = UIImage(contentsOfFile: origURL.path) else { return }
+            autoreleasepool {
+                print("[T32 prefetch] grain started")
+                let t0 = CFAbsoluteTimeGetCurrent()
+                var filtered = FilterUtils.applyAdjustedFilter(
+                    to: original,
+                    with: .t32Update,
+                    filterIntensity: filterIntensity,
+                    textureIntensity: textureIntensity,
+                    exposureIntensity: exposureIntensity,
+                    logT32Timing: false
+                ) ?? original
+                if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: .t32Update, logTiming: false) {
+                    filtered = withEffects
+                }
+                let elapsed = CFAbsoluteTimeGetCurrent() - t0
+                print(String(format: "[T32 prefetch] grain completed: %.2f s", elapsed))
+                if let data = filtered.jpegData(compressionQuality: 0.8) {
+                    try? data.write(to: cacheFileURL)
+                }
+                self.t32CacheLock.lock()
+                self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                self.t32ResultCache[key] = filtered
+                self.t32CacheOrder.append(key)
+                self.t32CacheLock.unlock()
+                DispatchQueue.main.async {
+                    if let index = self.photos.firstIndex(where: { $0.id == id }), self.photos[index].filter == .t32Update {
+                        if let data = filtered.jpegData(compressionQuality: 0.8) {
+                            try? data.write(to: self.filteredURL(for: id, filter: .t32Update))
+                        }
+                        self.photos[index].lastUpdated = Date()
+                        self.save()
+                        NotificationCenter.default.post(name: PhotoManager.t32ResultReadyNotification, object: nil, userInfo: ["photoId": id])
+                    }
+                }
+            }
         }
     }
     
     private func t32CacheKey(id: String, fi: Double, ti: Double, ei: Double) -> String {
         "\(id)_\(fi)_\(ti)_\(ei)"
+    }
+    
+    /// Call when camera screen is showing with T32 selected – warms grain pipeline in background so first capture is faster.
+    func warmT32PipelineIfNeeded() {
+        DispatchQueue.global(qos: .utility).async {
+            let size = CGSize(width: 64, height: 64)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            let dummy = renderer.image { ctx in UIColor.darkGray.setFill(); ctx.fill(CGRect(origin: .zero, size: size)) }
+            let afterLUT = FilterUtils.applyAdjustedFilter(to: dummy, with: .t32Update, filterIntensity: 1.0, textureIntensity: 1.0, exposureIntensity: 0.5, logT32Timing: false) ?? dummy
+            _ = DustAndDateEffectUtils.applyEffects(to: afterLUT, for: .t32Update, logTiming: false)
+        }
+    }
+    
+    /// Bakes T32 date stamp into the image when date is enabled (fixed position/size/angle).
+    private func bakeDateIfNeeded(_ image: UIImage, filter: FilterType, photoId: String) -> UIImage {
+        guard filter == .t32Update, DustAndDateEffectUtils.isDateEnabled(),
+              let withDate = FilmDateOverlay.apply(to: image) else { return image }
+        return withDate
     }
     
     private init() {
@@ -433,8 +505,13 @@ class PhotoManager: ObservableObject {
         getDocumentsDirectory().appendingPathComponent("\(id)_filtered.jpg")
     }
     
-    /// Adds a photo with filter applied. Heavy work (LUT + dust) runs on background so UI stays responsive.
-    /// Completion is called on main when the new photo is in the list (use for loading indicator).
+    /// T32 prefetch result – run once, store here, reuse from disk so pipeline na dobara chale.
+    func t32CacheFileURL(for id: String) -> URL {
+        getDocumentsDirectory().appendingPathComponent("\(id)_t32_cache.jpg")
+    }
+    
+    /// Adds a photo with filter applied. T32: photo is added immediately (no loader), grain runs in background and cache is updated.
+    /// Non-T32: same as before. Completion is called on main when the new photo is in the list.
     func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true, completion: (() -> Void)? = nil) {
         let id = UUID().uuidString
         let applyFullEffects = (filter != .normal)
@@ -443,9 +520,70 @@ class PhotoManager: ObservableObject {
         let origURL = originalURL(for: id)
         let filtURL = filteredURL(for: id, filter: filter)
         
+        if filter == .t32Update {
+            // T32: add photo immediately with original as placeholder, run grain in background, then update file + cache.
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                guard let self = self else { completion?(); return }
+                if let data = original.jpegData(compressionQuality: 0.8) {
+                    try? data.write(to: origURL)
+                }
+                if let data = original.jpegData(compressionQuality: 0.8) {
+                    try? data.write(to: filtURL)
+                }
+                let metadata = PhotoMetadata(
+                    id: id,
+                    filter: filter,
+                    filterIntensity: 1.0,
+                    textureIntensity: textureValue,
+                    exposureIntensity: exposureValue
+                )
+                DispatchQueue.main.async {
+                    self.lastAddedT32PhotoId = id
+                    withAnimation(.easeInOut(duration: 0.3)) {
+                        self.photos.insert(metadata, at: 0)
+                    }
+                    self.save()
+                    completion?()
+                }
+                var filteredImage = FilterUtils.applyAdjustedFilter(
+                    to: original,
+                    with: .t32Update,
+                    filterIntensity: 1.0,
+                    textureIntensity: textureValue,
+                    exposureIntensity: exposureValue,
+                    logT32Timing: false
+                ) ?? original
+                if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: .t32Update, logTiming: false) {
+                    filteredImage = withEffects
+                }
+                let key = self.t32CacheKey(id: id, fi: 1.0, ti: textureValue, ei: exposureValue)
+                self.t32CacheLock.lock()
+                self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                self.t32ResultCache[key] = filteredImage
+                self.t32CacheOrder.append(key)
+                self.t32CacheLock.unlock()
+                if let data = filteredImage.jpegData(compressionQuality: 0.8) {
+                    try? data.write(to: filtURL)
+                    try? data.write(to: self.t32CacheFileURL(for: id))
+                }
+                if self.autoSaveEnabled && shouldAutoSave {
+                    let toSave = self.bakeDateIfNeeded(filteredImage, filter: filter, photoId: id)
+                    UIImageWriteToSavedPhotosAlbum(toSave, nil, nil, nil)
+                }
+                DispatchQueue.main.async {
+                    if let index = self.photos.firstIndex(where: { $0.id == id }) {
+                        self.photos[index].lastUpdated = Date()
+                        self.save()
+                    }
+                    if self.lastAddedT32PhotoId == id { self.lastAddedT32PhotoId = nil }
+                    NotificationCenter.default.post(name: PhotoManager.t32ResultReadyNotification, object: nil, userInfo: ["photoId": id])
+                }
+            }
+            return
+        }
+        
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { completion?(); return }
-            let t0 = filter == .t32Update ? CFAbsoluteTimeGetCurrent() : 0
             var filteredImage = FilterUtils.applyAdjustedFilter(
                 to: original,
                 with: filter,
@@ -456,16 +594,14 @@ class PhotoManager: ObservableObject {
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: filter) {
                 filteredImage = withEffects
             }
-            if filter == .t32Update && t0 > 0 {
-                t32Log("addPhoto total", seconds: CFAbsoluteTimeGetCurrent() - t0)
-            }
             if self.autoSaveEnabled && shouldAutoSave {
-                UIImageWriteToSavedPhotosAlbum(filteredImage, nil, nil, nil)
+                let toSave = self.bakeDateIfNeeded(filteredImage, filter: filter, photoId: id)
+                UIImageWriteToSavedPhotosAlbum(toSave, nil, nil, nil)
             }
-            if let data = original.jpegData(compressionQuality: 0.70) {
+            if let data = original.jpegData(compressionQuality: 0.8) {
                 try? data.write(to: origURL)
             }
-            if let data = filteredImage.jpegData(compressionQuality: 0.70) {
+            if let data = filteredImage.jpegData(compressionQuality: 0.8) {
                 try? data.write(to: filtURL)
             }
             let metadata = PhotoMetadata(
@@ -520,7 +656,7 @@ class PhotoManager: ObservableObject {
             if let img = cached {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     guard let self = self else { return }
-                    if let data = img.jpegData(compressionQuality: 0.75) {
+                    if let data = img.jpegData(compressionQuality: 0.8) {
                         try? data.write(to: filtURL)
                     }
                     DispatchQueue.main.async {
@@ -528,6 +664,28 @@ class PhotoManager: ObservableObject {
                         self.photos[index].lastUpdated = Date()
                         self.save()
                         completion(img)
+                    }
+                }
+                return
+            }
+            let cacheFileURL = t32CacheFileURL(for: id)
+            if FileManager.default.fileExists(atPath: cacheFileURL.path),
+               let diskImg = UIImage(contentsOfFile: cacheFileURL.path) {
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    guard let self = self else { return }
+                    if let data = diskImg.jpegData(compressionQuality: 0.8) {
+                        try? data.write(to: filtURL)
+                    }
+                    self.t32CacheLock.lock()
+                    self.t32CacheEvictIfNeeded(beforeAddingKey: key)
+                    self.t32ResultCache[key] = diskImg
+                    self.t32CacheOrder.append(key)
+                    self.t32CacheLock.unlock()
+                    DispatchQueue.main.async {
+                        self.photos[index].filter = newFilter
+                        self.photos[index].lastUpdated = Date()
+                        self.save()
+                        completion(diskImg)
                     }
                 }
                 return
@@ -560,8 +718,11 @@ class PhotoManager: ObservableObject {
                 self.t32ResultCache[key] = filtered
                 self.t32CacheOrder.append(key)
                 self.t32CacheLock.unlock()
+                if let data = filtered.jpegData(compressionQuality: 0.8) {
+                    try? data.write(to: self.t32CacheFileURL(for: id))
+                }
             }
-            if let data = filtered.jpegData(compressionQuality: 0.75) {
+            if let data = filtered.jpegData(compressionQuality: 0.8) {
                 try? data.write(to: filtURL)
             }
             DispatchQueue.main.async {
@@ -612,7 +773,7 @@ class PhotoManager: ObservableObject {
                 self.t32CacheLock.unlock()
             }
             self.removeAllFilteredVariants(for: id)
-            if let data = filtered.jpegData(compressionQuality: 0.75) {
+            if let data = filtered.jpegData(compressionQuality: 0.8) {
                 try? data.write(to: filtURL)
             }
             DispatchQueue.main.async {
@@ -676,6 +837,7 @@ class PhotoManager: ObservableObject {
         let fm = FileManager.default
         for id in ids {
             try? fm.removeItem(at: originalURL(for: id))
+            try? fm.removeItem(at: t32CacheFileURL(for: id))
             removeAllFilteredVariants(for: id)
         }
         photos.removeAll { ids.contains($0.id) }
@@ -689,7 +851,7 @@ class PhotoManager: ObservableObject {
         if let files = try? fm.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil) {
             for url in files {
                 let name = url.lastPathComponent
-                if name.hasSuffix("_original.jpg") || name.contains("_filtered_") || name.hasSuffix("_filtered.jpg") {
+                if name.hasSuffix("_original.jpg") || name.hasSuffix("_t32_cache.jpg") || name.contains("_filtered_") || name.hasSuffix("_filtered.jpg") {
                     try? fm.removeItem(at: url)
                 }
             }

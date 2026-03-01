@@ -11,6 +11,7 @@ import SwiftUI
 struct FilterBarView: View {
     @Binding var selectedFilter: FilterType
     @Binding var showFilterBar: Bool
+    @AppStorage(DustAndDateEffectKeys.dateEnabled) private var dateStampEnabled: Bool = false
     
     @StateObject private var storeManager = StoreManager.shared
     @State private var showProScreen = false
@@ -22,7 +23,19 @@ struct FilterBarView: View {
     @State private var didInitialScroll = false   // ensures we scroll only once
     
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
+            if selectedFilter == .t32Update {
+                VStack(spacing: 6) {
+                    Text("Date Stamp")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                    DateStampSwitch(isOn: $dateStampEnabled)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 50)
+                .padding(.bottom, 0)
+            }
+            
             HStack {
                 Spacer()
                 HStack(spacing: 4) {
@@ -36,87 +49,87 @@ struct FilterBarView: View {
                 .padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 50).fill(Color.black))
             }
-            .padding(.top)
+            .padding(.top, selectedFilter == .t32Update ? 0 : 10)
             .padding(.horizontal)
             .padding(.horizontal)
             
             ScrollViewReader { proxy in
-                ScrollView(.horizontal, showsIndicators: false) {
-                    ZStack(alignment: .topLeading) {
-                        if let rect = filterRects[selectedFilter] {
-                            RoundedRectangle(cornerRadius: 30)
-                                .fill(Color.white)
-                                .frame(width: rect.width, height: rect.height)
-                                .position(x: rect.midX, y: rect.midY)
-                                .allowsHitTesting(false)
-                                .animation(.spring(response: 0.35, dampingFraction: 0.8), value: rect)
-                        }
-                        
-                        HStack(spacing: 24) {
-                            ForEach(filters, id: \.self) { filter in
-                                Button(action: {
-                                    // change selection without auto-scrolling
-                                    if filter.isPro && !storeManager.isPro {
-                                        showProScreen = true
-                                    } else {
-                                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                            selectedFilter = filter
-                                        }
-                                    }
-                                }) {
-                                    VStack(spacing: 4) {
-                                        ZStack {
-                                            filter.icon
-                                                .resizable()
-                                                .scaledToFit()
-                                                .frame(width: 60, height: 60)
-                                            
-                                            if filter.isPro && !storeManager.isPro {
-                                                Image(systemName: "lock.fill")
-                                                    .font(.system(size: 14))
-                                                    .foregroundColor(.white)
-                                                    .padding(8)
-                                                    .background(Color.black.opacity(0.5))
-                                                    .clipShape(Circle())
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        ZStack(alignment: .topLeading) {
+                            if let rect = filterRects[selectedFilter] {
+                                RoundedRectangle(cornerRadius: 30)
+                                    .fill(Color.white)
+                                    .frame(width: rect.width, height: rect.height)
+                                    .position(x: rect.midX, y: rect.midY)
+                                    .allowsHitTesting(false)
+                                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: rect)
+                            }
+                            
+                            HStack(spacing: 24) {
+                                ForEach(filters, id: \.self) { filter in
+                                    Button(action: {
+                                        // change selection without auto-scrolling
+                                        if filter.isPro && !storeManager.isPro {
+                                            showProScreen = true
+                                        } else {
+                                            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                                selectedFilter = filter
                                             }
                                         }
-                                        
-                                        Text(filter.title)
-                                            .font(.system(size: 15, weight: .medium))
-                                            .foregroundColor(selectedFilter == filter ? .black : .white)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 4)
-                                            .background(
-                                                GeometryReader { geo in
-                                                    Color.clear.preference(
-                                                        key: FilterRectKey.self,
-                                                        value: [filter: geo.frame(in: .named("filterHStack"))]
-                                                    )
+                                    }) {
+                                        VStack(spacing: 4) {
+                                            ZStack {
+                                                filter.icon
+                                                    .resizable()
+                                                    .scaledToFit()
+                                                    .frame(width: 60, height: 60)
+                                                
+                                                if filter.isPro && !storeManager.isPro {
+                                                    Image(systemName: "lock.fill")
+                                                        .font(.system(size: 14))
+                                                        .foregroundColor(.white)
+                                                        .padding(8)
+                                                        .background(Color.black.opacity(0.5))
+                                                        .clipShape(Circle())
                                                 }
-                                            )
+                                            }
+                                            
+                                            Text(filter.title)
+                                                .font(.system(size: 15, weight: .medium))
+                                                .foregroundColor(selectedFilter == filter ? .black : .white)
+                                                .padding(.horizontal, 10)
+                                                .padding(.vertical, 4)
+                                                .background(
+                                                    GeometryReader { geo in
+                                                        Color.clear.preference(
+                                                            key: FilterRectKey.self,
+                                                            value: [filter: geo.frame(in: .named("filterHStack"))]
+                                                        )
+                                                    }
+                                                )
+                                        }
+                                    }
+                                    .id(filter) // needed only for the initial one-time scroll
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                        .coordinateSpace(name: "filterHStack")
+                        .onPreferenceChange(FilterRectKey.self) { prefs in
+                            filterRects = prefs
+                            // One-time centering after we know frames/ids
+                            if !didInitialScroll {
+                                didInitialScroll = true
+                                DispatchQueue.main.async {
+                                    withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                                        proxy.scrollTo(selectedFilter, anchor: .center)
                                     }
                                 }
-                                .id(filter) // needed only for the initial one-time scroll
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                    .coordinateSpace(name: "filterHStack")
-                    .onPreferenceChange(FilterRectKey.self) { prefs in
-                        filterRects = prefs
-                        // One-time centering after we know frames/ids
-                        if !didInitialScroll {
-                            didInitialScroll = true
-                            DispatchQueue.main.async {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                                    proxy.scrollTo(selectedFilter, anchor: .center)
-                                }
                             }
                         }
                     }
+                    // IMPORTANT: No onChange(selectedFilter) here — no auto-scroll on tap
                 }
-                // IMPORTANT: No onChange(selectedFilter) here — no auto-scroll on tap
-            }
         }
         .clipped()
         .background(.darkGray)
@@ -132,6 +145,66 @@ struct FilterBarView: View {
     }
 }
 
+// MARK: - Switch for Date Stamp (T32) – 3D knob + glow, app theme
+private struct DateStampSwitch: View {
+    @Binding var isOn: Bool
+    
+    private let trackWidth: CGFloat = 44
+    private let trackHeight: CGFloat = 24
+    private let thumbSize: CGFloat = 20
+    private let padding: CGFloat = 2
+    
+    var body: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.2, dampingFraction: 0.72)) {
+                isOn.toggle()
+            }
+        }) {
+            ZStack(alignment: isOn ? .trailing : .leading) {
+                RoundedRectangle(cornerRadius: trackHeight / 2)
+                    .fill(Color(.darkGray))
+                    .frame(width: trackWidth, height: trackHeight)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: trackHeight / 2)
+                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+                
+                RoundedRectangle(cornerRadius: (thumbSize + padding) / 2)
+                    .fill(
+                        LinearGradient(
+                            colors: isOn
+                                ? [Color.white, Color.white.opacity(0.7), Color.white.opacity(0.5)]
+                                : [Color.white.opacity(0.6), Color.white.opacity(0.35), Color.white.opacity(0.15)],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: thumbSize + padding, height: thumbSize + padding)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: (thumbSize + padding) / 2)
+                            .stroke(
+                                LinearGradient(
+                                    colors: [Color.white.opacity(0.85), Color.white.opacity(0.08)],
+                                    startPoint: .topLeading,
+                                    endPoint: .bottomTrailing
+                                ),
+                                lineWidth: 2
+                            )
+                    )
+                    .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 4)
+                    .shadow(color: .black.opacity(0.35), radius: 2, x: 0, y: 2)
+                    .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
+                    .shadow(color: (isOn ? Color.white.opacity(0.35) : Color.clear), radius: 4, x: 0, y: 0)
+                    .shadow(color: (isOn ? Color.white.opacity(0.2) : Color.clear), radius: 8, x: 0, y: 0)
+                    .padding(.leading, padding)
+                    .padding(.trailing, isOn ? 0 : padding)
+            }
+            .frame(width: trackWidth, height: trackHeight)
+        }
+        .buttonStyle(.plain)
+    }
+}
 
 struct SamplesView: View {
     
@@ -285,9 +358,11 @@ struct SamplesView: View {
 
 
 
-#Preview {
-    FilterBarView(
-        selectedFilter: .constant(.normal),
-        showFilterBar: .constant(true)
-    )
+struct FilterBarView_Previews: PreviewProvider {
+    static var previews: some View {
+        FilterBarView(
+            selectedFilter: .constant(.normal),
+            showFilterBar: .constant(true)
+        )
+    }
 }

@@ -235,7 +235,6 @@ struct FullImageView: View {
     @State private var ignoreScrollChange = false
     @State private var isApplyingT32 = false
     @State private var isUpdatingIntensities = false
-    @State private var datePosition: CGPoint = FilmDateOverlay.defaultPosition
     
     private let filters: [FilterType] = FilterType.allCases
     
@@ -378,8 +377,8 @@ struct FullImageView: View {
                         let photoId = photoManager.photos[currentIndex].id
                         if selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled(),
                            let img = UIImage(contentsOfFile: photoManager.filteredURL(for: photoId, filter: selectedFilter).path),
-                           let withDate = FilmDateOverlay.apply(to: img, position: FilmDateOverlay.position(forPhotoId: photoId), size: FilmDateOverlay.size(forPhotoId: photoId), angle: FilmDateOverlay.angle(forPhotoId: photoId)),
-                           let data = withDate.jpegData(compressionQuality: 0.9) {
+                           let withDate = FilmDateOverlay.apply(to: img),
+                           let data = withDate.jpegData(compressionQuality: 0.8) {
                             let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
                             try? data.write(to: temp)
                             urlToShare = IdentifiableURL(url: temp)
@@ -413,8 +412,9 @@ struct FullImageView: View {
                             ZStack {
                                 // Check if we are showing Original (Long Press) or Edited
                                 if let img = (showOriginal && index == currentIndex ? loadedOriginals[photo.id] : loadedImages[photo.id]) {
-                                    ZoomableImageView(image: img)
-                                        .tag(index)
+                                    let showDate = selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled() && index == currentIndex && !isApplyingT32 && !isUpdatingIntensities
+                                    ZoomableImageView(image: img, showDateOverlay: showDate)
+                                    .tag(index)
                                 } else {
                                     // Fallback placeholder only if something goes wrong
                                     ProgressView()
@@ -427,22 +427,6 @@ struct FullImageView: View {
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
                     .ignoresSafeArea()
-                    
-                    if isApplyingT32 || isUpdatingIntensities {
-                        Color.black.opacity(0.35)
-                            .ignoresSafeArea()
-                        ProgressView()
-                            .tint(.white)
-                            .scaleEffect(1.2)
-                    }
-                    if selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled(),
-                       !photoManager.photos.isEmpty, !isApplyingT32, !isUpdatingIntensities {
-                        DraggableDateOverlay(
-                            position: $datePosition,
-                            photoId: photoManager.photos[currentIndex].id,
-                            image: loadedImages[photoManager.photos[currentIndex].id]
-                        )
-                    }
                 }
                 .gesture(
                     LongPressGesture(minimumDuration: 0.15)
@@ -554,13 +538,12 @@ struct FullImageView: View {
                 filterIntensity = photo.filterIntensity
                 textureIntensity = photo.textureIntensity
                 exposureIntensity = photo.exposureIntensity
-                datePosition = FilmDateOverlay.position(forPhotoId: photo.id)
                 updateSlidingWindow(at: currentIndex)
                 photoManager.prefetchT32IfNeeded(for: photo.id, filterIntensity: photo.filterIntensity, textureIntensity: photo.textureIntensity, exposureIntensity: photo.exposureIntensity)
             }
         }
         .onDisappear {
-            PhotoManager.shared.clearT32SessionCache()
+            // T32 cache persists until app kill for better UX when returning to camera
         }
         .onChange(of: currentIndex) { newIndex in
             guard !photoManager.photos.isEmpty else { return }
@@ -570,9 +553,23 @@ struct FullImageView: View {
             filterIntensity = photo.filterIntensity
             textureIntensity = photo.textureIntensity
             exposureIntensity = photo.exposureIntensity
-            datePosition = FilmDateOverlay.position(forPhotoId: photo.id)
             updateSlidingWindow(at: newIndex)
             photoManager.prefetchT32IfNeeded(for: photo.id, filterIntensity: photo.filterIntensity, textureIntensity: photo.textureIntensity, exposureIntensity: photo.exposureIntensity)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: PhotoManager.t32ResultReadyNotification)) { notification in
+            guard let photoId = notification.userInfo?["photoId"] as? String,
+                  !photoManager.photos.isEmpty,
+                  currentIndex < photoManager.photos.count,
+                  photoManager.photos[currentIndex].id == photoId else { return }
+            let url = photoManager.filteredURL(for: photoId, filter: .t32Update)
+            DispatchQueue.global(qos: .userInitiated).async {
+                guard let img = UIImage(contentsOfFile: url.path) else { return }
+                DispatchQueue.main.async {
+                    var copy = loadedImages
+                    copy[photoId] = img
+                    loadedImages = copy
+                }
+            }
         }
         // Live Preview
         .onChange(of: filterIntensity) { _ in if showFilterAdjustView { schedulePreviewUpdate() } }
@@ -668,14 +665,22 @@ struct FullImageView: View {
 
 /// This helper completely avoids Kingfisher.
 /// It takes a native UIImage and applies the Zoomable modifier.
+/// When showDateOverlay is true, the date is drawn inside the zoomable content so it moves and scales with the image (stamp behaviour).
 struct ZoomableImageView: View {
     let image: UIImage
+    var showDateOverlay: Bool = false
     
     var body: some View {
-        Image(uiImage: image)
-            .resizable()
-            .scaledToFit()
-            .zoomable() // Uses the Zoomable package
+        ZStack {
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFit()
+            if showDateOverlay {
+                FixedDateOverlay(image: image)
+                    .allowsHitTesting(false)
+            }
+        }
+        .zoomable() // Image and date zoom/pan together like a single stamped photo
     }
 }
 
@@ -747,26 +752,15 @@ struct FilterAdjustView: View {
     }
 }
 
-// MARK: - Draggable Date Overlay (T32)
-/// Date is always drawn on top of the image and constrained to the image frame (aspect-fit rect).
-struct DraggableDateOverlay: View {
-    @Binding var position: CGPoint
-    let photoId: String
-    /// Current image so we can compute aspect-fit frame; date stays inside this frame only.
+// MARK: - Fixed Date Overlay (T32)
+/// Date is drawn at a fixed position (bottom-left); no drag, resize, or rotation.
+/// Uses a slightly inset position in-app so the date doesn’t look flush with the frame; save/share keeps FilmDateOverlay defaults.
+struct FixedDateOverlay: View {
     var image: UIImage?
-    @GestureState private var dragOffset: CGSize = .zero
-    @State private var dateSize: CGFloat = FilmDateOverlay.defaultSize
-    @State private var dateAngle: CGFloat = FilmDateOverlay.defaultAngle
-    @State private var pinchScale: CGFloat = 1
-    @State private var rotationDelta: Double = 0
     
-    private let minSize: CGFloat = 12
-    private let maxSize: CGFloat = 30
-    /// Inset kam taake date corner/wall ke kareeb move ho sake; frame limit barhai.
-    private let dateInsetMin: CGFloat = 48
-    private let dateInsetFraction: CGFloat = 0.06
+    /// In-app gallery only: thora andar taake frame se out na lage. Save/share position unchanged.
+    private static let galleryPosition = CGPoint(x: 0.048, y: 0.905)
     
-    /// Aspect-fit rect of the image inside the view (same as ZoomableImageView).
     private static func imageDisplayFrame(viewSize: CGSize, imageSize: CGSize) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: viewSize)
@@ -779,109 +773,29 @@ struct DraggableDateOverlay: View {
         return CGRect(x: ox, y: oy, width: drawW, height: drawH)
     }
     
+    private func dateCenterInView(imageFrame: CGRect) -> (CGFloat, CGFloat) {
+        let p = Self.galleryPosition
+        let cx = imageFrame.minX + p.x * imageFrame.width
+        let cy = imageFrame.minY + p.y * imageFrame.height
+        return (cx, cy)
+    }
+    
     var body: some View {
         GeometryReader { geo in
             let w = geo.size.width
             let h = geo.size.height
-            let imgSize = image?.size ?? CGSize(width: w, height: h)
+            let imgSize: CGSize = image.map { FilmDateOverlay.displaySize(for: $0) } ?? CGSize(width: w, height: h)
             let imageFrame = Self.imageDisplayFrame(viewSize: CGSize(width: w, height: h), imageSize: imgSize)
-            let (dateCenterX, dateCenterY) = dateCenterInView(imageFrame: imageFrame)
-            let x = dateCenterX + dragOffset.width
-            let y = dateCenterY + dragOffset.height
-            let (clampedX, clampedY) = clampToImageFrame(centerX: x, centerY: y, imageFrame: imageFrame)
-            let displaySize = min(maxSize, max(minSize, dateSize * pinchScale))
-            let displayAngle = dateAngle + rotationDelta
-            ZStack {
-                Color.clear
-                    .frame(width: w, height: h)
-                    .contentShape(Rectangle())
-                    .allowsHitTesting(false)
-                dateTextWithDecoration(displaySize: displaySize)
-                    .rotationEffect(.degrees(displayAngle))
-                    .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
-                    .frame(width: 180, height: 180)
-                    .contentShape(Rectangle())
-                    .position(x: clampedX, y: clampedY)
-                    .onAppear {
-                        dateSize = min(maxSize, max(minSize, FilmDateOverlay.size(forPhotoId: photoId)))
-                        dateAngle = FilmDateOverlay.angle(forPhotoId: photoId)
-                    }
-                    .onChange(of: photoId) {
-                        dateSize = min(maxSize, max(minSize, FilmDateOverlay.size(forPhotoId: photoId)))
-                        dateAngle = FilmDateOverlay.angle(forPhotoId: photoId)
-                    }
-                    .gesture(
-                        LongPressGesture(minimumDuration: 0.35)
-                            .sequenced(before: DragGesture())
-                            .updating($dragOffset) { value, state, _ in
-                                if case .second(true, let drag?) = value { state = drag.translation }
-                            }
-                            .onEnded { value in
-                                if case .second(true, let drag?) = value {
-                                    let newCenterX = dateCenterInView(imageFrame: imageFrame).0 + drag.translation.width
-                                    let newCenterY = dateCenterInView(imageFrame: imageFrame).1 + drag.translation.height
-                                    let (cX, cY) = clampToImageFrame(centerX: newCenterX, centerY: newCenterY, imageFrame: imageFrame)
-                                    let newPosX = (cX - imageFrame.minX) / imageFrame.width
-                                    let newPosY = (cY - imageFrame.minY) / imageFrame.height
-                                    position = CGPoint(x: newPosX, y: newPosY)
-                                    FilmDateOverlay.setPosition(position, forPhotoId: photoId)
-                                }
-                            }
-                    )
-                    .simultaneousGesture(
-                        MagnificationGesture()
-                            .onChanged { pinchScale = $0 }
-                            .onEnded { value in
-                                let newSize = min(maxSize, max(minSize, dateSize * value))
-                                dateSize = newSize
-                                FilmDateOverlay.setSize(newSize, forPhotoId: photoId)
-                                pinchScale = 1
-                            }
-                    )
-                    .simultaneousGesture(
-                        RotationGesture()
-                            .onChanged { rotationDelta = $0.degrees }
-                            .onEnded { value in
-                                dateAngle += CGFloat(value.degrees)
-                                FilmDateOverlay.setAngle(dateAngle, forPhotoId: photoId)
-                                rotationDelta = 0
-                            }
-                    )
-            }
+            let (cx, cy) = dateCenterInView(imageFrame: imageFrame)
+            let dateAngle = FilmDateOverlay.defaultAngle(for: imgSize)
+            Text(FilmDateOverlay.formattedDateString())
+                .font(.system(size: FilmDateOverlay.defaultSize, weight: DateStyle.fontWeight, design: .monospaced))
+                .foregroundColor(DateStyle.color)
+                .rotationEffect(.degrees(dateAngle))
+                .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)
+                .frame(width: 180, height: 180)
+                .position(x: cx, y: cy)
         }
-        .allowsHitTesting(true)
-    }
-    
-    /// Normalized position (0-1) → view coordinates within image frame.
-    private func dateCenterInView(imageFrame: CGRect) -> (CGFloat, CGFloat) {
-        let cx = imageFrame.minX + position.x * imageFrame.width
-        let cy = imageFrame.minY + position.y * imageFrame.height
-        return (cx, cy)
-    }
-    
-    /// Inset from image edges (proportional so large images get full movement range).
-    private func dateInset(for imageFrame: CGRect) -> CGFloat {
-        let short = min(imageFrame.width, imageFrame.height)
-        return max(dateInsetMin, short * dateInsetFraction)
-    }
-    
-    /// Clamp date center to image frame so date never goes outside the image.
-    private func clampToImageFrame(centerX: CGFloat, centerY: CGFloat, imageFrame: CGRect) -> (CGFloat, CGFloat) {
-        let inset = dateInset(for: imageFrame)
-        let minCX = imageFrame.minX + inset
-        let maxCX = imageFrame.maxX - inset
-        let minCY = imageFrame.minY + inset
-        let maxCY = imageFrame.maxY - inset
-        let cx = max(minCX, min(maxCX, centerX))
-        let cy = max(minCY, min(maxCY, centerY))
-        return (cx, cy)
-    }
-    
-    @ViewBuilder
-    private func dateTextWithDecoration(displaySize: CGFloat) -> some View {
-        Text(FilmDateOverlay.formattedDateString())
-            .font(.system(size: displaySize, weight: DateStyle.fontWeight, design: .monospaced))
-            .foregroundColor(DateStyle.color)
     }
 }
 

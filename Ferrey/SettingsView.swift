@@ -34,9 +34,6 @@ struct SettingsView: View {
     
     @AppStorage("volumeShutterEnabled")   private var volumeShutterEnabled: Bool    = false
     
-    // Phase 4: Dust & Date (T32 film overlay always applies; only date stamp is toggleable)
-    @AppStorage(DustAndDateEffectKeys.dateEnabled)   private var phase4DateEnabled: Bool        = false
-    
     var body: some View {
         NavigationView {
             Form {
@@ -90,11 +87,6 @@ struct SettingsView: View {
                     lockedToggle("settings.toggle.livePreview", isOn: $livePreviewEnabled)
                     lockedToggle("settings.toggle.gridOverlay", isOn: $gridOverlayEnabled)
                     lockedToggle("settings.toggle.hideLogo", isOn: $hideLogoEnabled)
-                }
-                
-                // MARK: — Phase 4: Dust & Date
-                Section(header: Text("settings.section.dustAndDate")) {
-                    Toggle("settings.toggle.dateStamp", isOn: $phase4DateEnabled)
                 }
                 
                 // MARK: — Storage Section

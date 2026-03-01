@@ -123,7 +123,6 @@ struct ContentView: View {
                             
                             ZStack {
                                 CameraView(imageHandler: { rawImage in
-                                    if selectedFilter == .t32Update { isProcessingCapture = true }
                                     PhotoManager.shared.addPhoto(original: rawImage, filter: selectedFilter) {
                                         DispatchQueue.main.async { isProcessingCapture = false }
                                     }
@@ -282,7 +281,7 @@ struct ContentView: View {
                                             Text(aspectOptions[aspectIndex])
                                                 .font(.system(size: 16, weight: .medium))
                                                 .foregroundColor(.white)
-                                                .frame(width: 34)
+                                                .frame(minWidth: 44, alignment: .center)
                                         }
                                     }
                                     .padding(.horizontal)
@@ -392,6 +391,9 @@ struct ContentView: View {
                 } else {
                     selectedFilter = lastFilter
                 }
+                if selectedFilter == .t32Update {
+                    PhotoManager.shared.warmT32PipelineIfNeeded()
+                }
                 if flashOnEnabled {
                     flashIndex = 1
                 }
@@ -409,6 +411,9 @@ struct ContentView: View {
                     showProScreen = true
                 } else {
                     lastFilterRaw = newValue.rawValue
+                    if newValue == .t32Update {
+                        PhotoManager.shared.warmT32PipelineIfNeeded()
+                    }
                 }
             }
         }

@@ -12,9 +12,26 @@ enum FilmDateOverlay {
     
     /// Default position: bottom-left corner, wall ke kareeb. (0,0)=top-left, (1,1)=bottom-right.
     static let defaultPosition = CGPoint(x: 0.008, y: 0.97)
-    /// Default angle when first time: vertical (-90°). After user rotates, saved value is used.
+    /// Portrait default: vertical (-90°). Landscape: horizontal (0°) – detect from image size.
     static let defaultAngle: CGFloat = -90
-    static let defaultSize: CGFloat = 10
+    static let defaultSize: CGFloat = 15
+    
+    /// Horizontal (landscape) picture = width > height. Date angle usi ke mutabiq.
+    static func isLandscape(_ size: CGSize) -> Bool { size.width > size.height }
+    
+    /// Portrait: -90° (vertical); landscape: 0° (horizontal along bottom).
+    static func defaultAngle(for imageSize: CGSize) -> CGFloat {
+        isLandscape(imageSize) ? 0 : defaultAngle
+    }
+    
+    /// Display dimensions (orientation ke mutabiq) – horizontal/portrait sahi detect ke liye.
+    static func displaySize(for image: UIImage) -> CGSize {
+        let s = image.size
+        switch image.imageOrientation {
+        case .left, .right: return CGSize(width: s.height, height: s.width)
+        default: return s
+        }
+    }
     
     // MARK: - Design (look only)
     
@@ -34,10 +51,10 @@ enum FilmDateOverlay {
     /// Inset from edges when drawing (export/bake) – corner ke kareeb allow.
     private static let defaultInset: CGFloat = 20
     
-    /// Text size relative to image short side; kept smaller for date stamp.
+    /// Text size relative to image short side; +5pt for slightly larger date stamp.
     private static func fontSize(for imageSize: CGSize) -> CGFloat {
         let short = min(imageSize.width, imageSize.height)
-        return max(28, min(72, short * 0.012 + 32))
+        return max(33, min(77, short * 0.012 + 37))
     }
     
     // MARK: - Draw (vertical, any position)
@@ -54,7 +71,8 @@ enum FilmDateOverlay {
         let anchorYFromBottomClamped = max(defaultInset, min(size.height - defaultInset, anchorYFromBottom))
         
         let ptSize = customSize ?? fontSize(for: size)
-        let angleRad = (degrees ?? defaultAngle) * .pi / 180
+        let angleDeg = degrees ?? defaultAngle(for: size)
+        let angleRad = angleDeg * .pi / 180
         
         let format = UIGraphicsImageRendererFormat()
         format.scale = toDraw.scale

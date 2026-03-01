@@ -100,6 +100,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
     private var currentFilter: CIFilter?
     
     private var observers: [NSObjectProtocol] = []
+    private var frontCameraFocusTimer: Timer?
     
     var disableSelfieMirroring: Bool = false
     
@@ -128,6 +129,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
     
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
+        stopFrontCameraFocusTimer()
         VolumeShutterManager.shared.stopObserving()
         do {
             try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -150,6 +152,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
     }
     
     deinit {
+        stopFrontCameraFocusTimer()
         observers.forEach { NotificationCenter.default.removeObserver($0) }
         captureSession?.stopRunning()
         VolumeShutterManager.shared.stopObserving()
@@ -241,12 +244,95 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             if captureSession.canAddInput(input) {
                 captureSession.addInput(input)
                 currentDeviceInput = input
+                configureContinuousAutoFocus(for: device)
                 DispatchQueue.main.async {
                     CameraManager.shared.updateCameraState(for: device)
                 }
             }
         } catch {
             print("Error creating camera input for device \(device): \(error)")
+        }
+    }
+    
+    /// Auto-focus on scene (human/object) – front & back. Front par continuous na ho to single AF + periodic retry.
+    private func configureContinuousAutoFocus(for device: AVCaptureDevice) {
+        stopFrontCameraFocusTimer()
+        do {
+            try device.lockForConfiguration()
+            device.isSubjectAreaChangeMonitoringEnabled = true
+            let isFront = (device.position == .front)
+            if device.isFocusModeSupported(.continuousAutoFocus) {
+                device.focusMode = .continuousAutoFocus
+            } else if isFront && device.isFocusModeSupported(.autoFocus) && device.isFocusPointOfInterestSupported {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.focusMode = .autoFocus
+                startFrontCameraFocusTimer()
+            }
+            if device.isExposureModeSupported(.continuousAutoExposure) {
+                device.exposureMode = .continuousAutoExposure
+            } else if isFront && device.isExposureModeSupported(.autoExpose) && device.isExposurePointOfInterestSupported {
+                device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.exposureMode = .autoExpose
+            }
+            device.unlockForConfiguration()
+        } catch {
+            print("Failed to set continuous auto-focus: \(error)")
+        }
+    }
+    
+    private func startFrontCameraFocusTimer() {
+        frontCameraFocusTimer?.invalidate()
+        frontCameraFocusTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self] _ in
+            self?.triggerSingleFocusAtCenter()
+        }
+        RunLoop.main.add(frontCameraFocusTimer!, forMode: .common)
+    }
+    
+    private func stopFrontCameraFocusTimer() {
+        frontCameraFocusTimer?.invalidate()
+        frontCameraFocusTimer = nil
+    }
+    
+    /// Single AF at center – front camera ke liye periodic retry.
+    private func triggerSingleFocusAtCenter() {
+        guard let device = currentDeviceInput?.device, device.position == .front else {
+            stopFrontCameraFocusTimer()
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+                device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.exposureMode = .autoExpose
+            }
+            device.unlockForConfiguration()
+        } catch {}
+    }
+    
+    /// Jab focus hil jaye (subject area change) – ek baar center par focus force karo, phir wapas continuous AF taake retry hota rahe.
+    private func retryFocusAfterSubjectAreaChange() {
+        guard let device = currentDeviceInput?.device else { return }
+        do {
+            try device.lockForConfiguration()
+            if device.isFocusPointOfInterestSupported && device.isFocusModeSupported(.autoFocus) {
+                device.focusPointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.focusMode = .autoFocus
+            }
+            if device.isExposurePointOfInterestSupported && device.isExposureModeSupported(.autoExpose) {
+                device.exposurePointOfInterest = CGPoint(x: 0.5, y: 0.5)
+                device.exposureMode = .autoExpose
+            }
+            device.unlockForConfiguration()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self = self, let device = self.currentDeviceInput?.device else { return }
+                self.configureContinuousAutoFocus(for: device)
+            }
+        } catch {
+            print("Failed to retry focus: \(error)")
         }
     }
     
@@ -308,6 +394,9 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
                 self?.setZoom(factor: CGFloat(zoom))
             }
         })
+        observers.append(center.addObserver(forName: NSNotification.Name.AVCaptureDeviceSubjectAreaDidChange, object: nil, queue: .main) { [weak self] _ in
+            self?.retryFocusAfterSubjectAreaChange()
+        })
     }
     
     private func setFlashMode(index: Int) {
@@ -363,6 +452,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
            captureSession.canAddInput(newInput) {
             captureSession.addInput(newInput)
             currentDeviceInput = newInput
+            configureContinuousAutoFocus(for: newDevice)
             CameraManager.shared.updateCameraState(for: newDevice)
         } else {
             captureSession.addInput(currentInput)
