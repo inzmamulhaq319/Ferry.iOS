@@ -197,7 +197,12 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
     private func setupSession() {
         captureSession = AVCaptureSession()
         captureSession.beginConfiguration()
-        captureSession.sessionPreset = .photo
+        // Device ki highest available resolution – .high support ho to use, warna .photo
+        if captureSession.canSetSessionPreset(.high) {
+            captureSession.sessionPreset = .high
+        } else {
+            captureSession.sessionPreset = .photo
+        }
         
         let initialPosition: AVCaptureDevice.Position = (lastCameraPosition == "front") ? .front : .back
         
@@ -228,9 +233,9 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
             captureSession.addOutput(photoOutput)
         }
         
-        photoOutput.isHighResolutionCaptureEnabled = false
+        photoOutput.isHighResolutionCaptureEnabled = true
         if #available(iOS 16.0, *) {
-            photoOutput.maxPhotoQualityPrioritization = .speed
+            photoOutput.maxPhotoQualityPrioritization = .quality
         }
         
         updateVideoOutputConnection()
@@ -502,9 +507,9 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         
         let settings = AVCapturePhotoSettings()
         if #available(iOS 15.0, *) {
-            settings.photoQualityPrioritization = .speed
+            settings.photoQualityPrioritization = .quality
         }
-        settings.isHighResolutionPhotoEnabled = false
+        settings.isHighResolutionPhotoEnabled = true
         
         if let photoOutputConnection = self.photoOutput.connection(with: .video) {
             photoOutputConnection.videoOrientation = .portrait

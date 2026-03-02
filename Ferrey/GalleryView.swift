@@ -378,7 +378,7 @@ struct FullImageView: View {
                         if selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled(),
                            let img = UIImage(contentsOfFile: photoManager.filteredURL(for: photoId, filter: selectedFilter).path),
                            let withDate = FilmDateOverlay.apply(to: img),
-                           let data = withDate.jpegData(compressionQuality: 0.8) {
+                           let data = withDate.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                             let temp = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
                             try? data.write(to: temp)
                             urlToShare = IdentifiableURL(url: temp)

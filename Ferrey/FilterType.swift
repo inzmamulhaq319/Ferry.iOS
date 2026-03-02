@@ -59,7 +59,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     
     // MARK: - Filter ENUM
     
-    case normal, t32Update, apeninos, asf, bandw, f7x, luxury, terra
+    case normal, t32Update, t33, t34, apeninos, asf, bandw, f7x, luxury, terra
     
     // MARK: - Filter NAME
     
@@ -67,6 +67,8 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
         switch self {
             case .normal: return "Normal"
             case .t32Update: return "T32"
+            case .t33: return "T33"
+            case .t34: return "T34"
             case .apeninos: return "Apeninos"
             case .asf: return "ASF"
             case .bandw: return "B&W"
@@ -79,7 +81,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     /// Asset name for filter icon (in Assets). Defaults to title; override per filter if needed.
     private var iconAssetName: String {
         switch self {
-            case .t32Update: return "icon t32"
+            case .t32Update, .t33, .t34: return "icon t32"
             default: return title
         }
     }
@@ -89,7 +91,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     
     var isPro: Bool {
         switch self {
-            case .normal, .t32Update, .apeninos, .asf:
+            case .normal, .t32Update, .t33, .t34, .apeninos, .asf:
                 return false
             case .bandw, .f7x, .luxury, .terra:
                 return true
@@ -101,7 +103,7 @@ enum FilterType: String, CaseIterable, Codable, Equatable, Hashable {
     var samples: [String] {
         switch self {
             case .normal: return ["normal_1"]
-            case .t32Update: return ["apeninos_1", "apeninos_2"]
+            case .t32Update, .t33, .t34: return ["apeninos_1", "apeninos_2"]
             case .apeninos: return ["apeninos_1", "apeninos_2"]
             case .asf: return ["asf_1", "asf_2"]
             case .bandw: return ["bandw_1", "bandw_2"]
@@ -201,6 +203,24 @@ struct FilterUtils {
         exposureFilter.setValue(exposureValue, forKey: kCIInputEVKey)
         processed = exposureFilter.outputImage ?? processed
         
+        // T33: mamuli sharpness, phir dust overlay
+        if type == .t33 {
+            if let sharpen = CIFilter(name: "CISharpenLuminance") {
+                sharpen.setValue(processed, forKey: kCIInputImageKey)
+                sharpen.setValue(0.22, forKey: kCIInputSharpnessKey)
+                if let sharpened = sharpen.outputImage?.cropped(to: processed.extent) {
+                    processed = sharpened
+                }
+            }
+            if let withDust = T33Filter.applyDustOverlay(photo: processed, extent: processed.extent) {
+                processed = withDust
+            }
+        }
+        // T34: "Dust t32" overlay
+        if type == .t34, let withDust = T34Filter.applyDustOverlay(photo: processed, extent: processed.extent) {
+            processed = withDust
+        }
+        
         guard let cgImage = context.createCGImage(processed, from: processed.extent) else { return nil }
         if type == .t32Update && logT32Timing && t0 > 0 {
             t32Log("LUT+texture+render", seconds: CFAbsoluteTimeGetCurrent() - t0)
@@ -209,7 +229,7 @@ struct FilterUtils {
     }
     
     static func createColorCubeFilter(for type: FilterType) -> CIFilter? {
-        if type == .t32Update {
+        if type == .t32Update || type == .t33 || type == .t34 {
             let cached: (dimension: Int, data: Data)? = {
                 t32CacheLock.lock()
                 defer { t32CacheLock.unlock() }
@@ -264,7 +284,7 @@ struct FilterUtils {
     private static func lutFileName(for type: FilterType) -> String? {
         switch type {
             case .normal: return nil
-            case .t32Update: return "T32 update"
+            case .t32Update, .t33, .t34: return "T32 update"
             default: return type.title
         }
     }
@@ -322,6 +342,8 @@ struct PhotoMetadata: Codable, Identifiable, Equatable {
 
 class PhotoManager: ObservableObject {
     static let shared = PhotoManager()
+    /// JPEG save quality – high quality capture ke liye 0.95 (device max quality capture alag se CameraView mein).
+    static let jpegCompressionQuality: CGFloat = 0.95
     /// Jab T32 result ready ho (addPhoto ya prefetch) – post with userInfo ["photoId": String]. View isse sun kar current photo refresh kare.
     static let t32ResultReadyNotification = Notification.Name("T32ResultReady")
     /// Recently captured T32 photo id – isko priority deni hai, baaki normal.
@@ -428,7 +450,7 @@ class PhotoManager: ObservableObject {
                 }
                 let elapsed = CFAbsoluteTimeGetCurrent() - t0
                 print(String(format: "[T32 prefetch] grain completed: %.2f s", elapsed))
-                if let data = filtered.jpegData(compressionQuality: 0.8) {
+                if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                     try? data.write(to: cacheFileURL)
                 }
                 self.t32CacheLock.lock()
@@ -438,7 +460,7 @@ class PhotoManager: ObservableObject {
                 self.t32CacheLock.unlock()
                 DispatchQueue.main.async {
                     if let index = self.photos.firstIndex(where: { $0.id == id }), self.photos[index].filter == .t32Update {
-                        if let data = filtered.jpegData(compressionQuality: 0.8) {
+                        if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                             try? data.write(to: self.filteredURL(for: id, filter: .t32Update))
                         }
                         self.photos[index].lastUpdated = Date()
@@ -483,6 +505,21 @@ class PhotoManager: ObservableObject {
         if let data = UserDefaults.standard.data(forKey: photosKey),
            let decoded = try? JSONDecoder().decode([PhotoMetadata].self, from: data) {
             photos = decoded
+            removeOrphanedPhotos()
+        }
+    }
+    
+    /// Deleted image footprints na dikhein: jin photos ki original/filtered dono files disk par nahi, unhe list se hata do aur save.
+    private func removeOrphanedPhotos() {
+        let fm = FileManager.default
+        let before = photos.count
+        photos.removeAll { photo in
+            let origExists = fm.fileExists(atPath: originalURL(for: photo.id).path)
+            let filtExists = fm.fileExists(atPath: filteredURL(for: photo.id, filter: photo.filter).path)
+            return !origExists && !filtExists
+        }
+        if photos.count != before {
+            save()
         }
     }
     
@@ -524,10 +561,10 @@ class PhotoManager: ObservableObject {
             // T32: add photo immediately with original as placeholder, run grain in background, then update file + cache.
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 guard let self = self else { completion?(); return }
-                if let data = original.jpegData(compressionQuality: 0.8) {
+                if let data = original.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                     try? data.write(to: origURL)
                 }
-                if let data = original.jpegData(compressionQuality: 0.8) {
+                if let data = original.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                     try? data.write(to: filtURL)
                 }
                 let metadata = PhotoMetadata(
@@ -562,7 +599,7 @@ class PhotoManager: ObservableObject {
                 self.t32ResultCache[key] = filteredImage
                 self.t32CacheOrder.append(key)
                 self.t32CacheLock.unlock()
-                if let data = filteredImage.jpegData(compressionQuality: 0.8) {
+                if let data = filteredImage.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                     try? data.write(to: filtURL)
                     try? data.write(to: self.t32CacheFileURL(for: id))
                 }
@@ -598,10 +635,10 @@ class PhotoManager: ObservableObject {
                 let toSave = self.bakeDateIfNeeded(filteredImage, filter: filter, photoId: id)
                 UIImageWriteToSavedPhotosAlbum(toSave, nil, nil, nil)
             }
-            if let data = original.jpegData(compressionQuality: 0.8) {
+            if let data = original.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: origURL)
             }
-            if let data = filteredImage.jpegData(compressionQuality: 0.8) {
+            if let data = filteredImage.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)
             }
             let metadata = PhotoMetadata(
@@ -656,7 +693,7 @@ class PhotoManager: ObservableObject {
             if let img = cached {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     guard let self = self else { return }
-                    if let data = img.jpegData(compressionQuality: 0.8) {
+                    if let data = img.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                         try? data.write(to: filtURL)
                     }
                     DispatchQueue.main.async {
@@ -673,7 +710,7 @@ class PhotoManager: ObservableObject {
                let diskImg = UIImage(contentsOfFile: cacheFileURL.path) {
                 DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                     guard let self = self else { return }
-                    if let data = diskImg.jpegData(compressionQuality: 0.8) {
+                    if let data = diskImg.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                         try? data.write(to: filtURL)
                     }
                     self.t32CacheLock.lock()
@@ -718,11 +755,11 @@ class PhotoManager: ObservableObject {
                 self.t32ResultCache[key] = filtered
                 self.t32CacheOrder.append(key)
                 self.t32CacheLock.unlock()
-                if let data = filtered.jpegData(compressionQuality: 0.8) {
+                if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                     try? data.write(to: self.t32CacheFileURL(for: id))
                 }
             }
-            if let data = filtered.jpegData(compressionQuality: 0.8) {
+            if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)
             }
             DispatchQueue.main.async {
@@ -773,7 +810,7 @@ class PhotoManager: ObservableObject {
                 self.t32CacheLock.unlock()
             }
             self.removeAllFilteredVariants(for: id)
-            if let data = filtered.jpegData(compressionQuality: 0.8) {
+            if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)
             }
             DispatchQueue.main.async {
