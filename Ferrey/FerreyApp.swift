@@ -67,9 +67,6 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Kick off internal counters (must be called once on launch)
         SwiftRater.appLaunched()  // :contentReference[oaicite:3]{index=3}
         
-        // Preload T32 filter in background; stays loaded for app lifetime so apply is instant
-        FilterUtils.warmUpT32InBackground()
-        
         return true
     }
 }

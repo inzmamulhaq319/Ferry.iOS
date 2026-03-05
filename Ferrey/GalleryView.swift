@@ -189,11 +189,6 @@ struct GalleryView: View {
                 }
             }
         }
-        .onAppear {
-            if let first = photoManager.photos.first {
-                photoManager.prefetchT32IfNeeded(for: first.id, filterIntensity: first.filterIntensity, textureIntensity: first.textureIntensity, exposureIntensity: first.exposureIntensity)
-            }
-        }
         .navigationBarHidden(true)
     }
 }
@@ -211,6 +206,7 @@ struct FullImageView: View {
     
     @ObservedObject var photoManager = PhotoManager.shared
     @EnvironmentObject private var storeManager: StoreManager
+    @AppStorage(DustAndDateEffectKeys.dateEnabled) private var dateStampEnabled: Bool = false
     
     @State private var currentIndex: Int = 0
     @State private var selectedFilter: FilterType = .normal
@@ -233,10 +229,9 @@ struct FullImageView: View {
     @State private var updateTask: Task<Void, Never>?
     @State private var filterRects: [FilterType: CGRect] = [:]
     @State private var ignoreScrollChange = false
-    @State private var isApplyingT32 = false
     @State private var isUpdatingIntensities = false
     
-    private let filters: [FilterType] = FilterType.allCases
+    private let filters: [FilterType] = FilterType.visibleFilterCases
     
     // MARK: - Optimized Background Downsampler
     
@@ -375,7 +370,7 @@ struct FullImageView: View {
                     Button(action: {
                         guard !photoManager.photos.isEmpty else { return }
                         let photoId = photoManager.photos[currentIndex].id
-                        if selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled(),
+                        if selectedFilter == .t34 && dateStampEnabled,
                            let img = UIImage(contentsOfFile: photoManager.filteredURL(for: photoId, filter: selectedFilter).path),
                            let withDate = FilmDateOverlay.apply(to: img),
                            let data = withDate.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
@@ -412,7 +407,7 @@ struct FullImageView: View {
                             ZStack {
                                 // Check if we are showing Original (Long Press) or Edited
                                 if let img = (showOriginal && index == currentIndex ? loadedOriginals[photo.id] : loadedImages[photo.id]) {
-                                    let showDate = selectedFilter == .t32Update && DustAndDateEffectUtils.isDateEnabled() && index == currentIndex && !isApplyingT32 && !isUpdatingIntensities
+                                    let showDate = selectedFilter == .t34 && dateStampEnabled && index == currentIndex && !isUpdatingIntensities
                                     ZoomableImageView(image: img, showDateOverlay: showDate)
                                     .tag(index)
                                 } else {
@@ -438,149 +433,141 @@ struct FullImageView: View {
                         .onEnded { _ in showOriginal = false }
                 )
                 
-                // MARK: - Filter Strip
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        ZStack(alignment: .topLeading) {
-                            if let rect = filterRects[selectedFilter] {
-                                RoundedRectangle(cornerRadius: 30)
-                                    .fill(Color.white)
-                                    .frame(width: rect.width, height: rect.height)
-                                    .offset(x: rect.minX, y: rect.minY)
-                                    .allowsHitTesting(false)
-                                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: rect)
-                            }
-                            
-                            HStack(spacing: 24) {
-                                ForEach(filters, id: \.self) { filter in
-                                    Button(action: {
-                                        if filter.isPro && !storeManager.isPro {
-                                            showProScreen = true
-                                            return
-                                        }
-                                        
-                                        if selectedFilter == filter {
-                                            if storeManager.isPro { showFilterAdjustView = true }
-                                            else { showProScreen = true }
-                                        } else {
-                                            let photo = photoManager.photos[currentIndex]
-                                            let photoId = photo.id
-                                            selectedFilter = filter
-                                            let showLoader = filter == .t32Update && !photoManager.hasCachedT32(for: photoId, filterIntensity: photo.filterIntensity, textureIntensity: photo.textureIntensity, exposureIntensity: photo.exposureIntensity)
-                                            if showLoader { isApplyingT32 = true }
-                                            photoManager.updateFilter(for: photoId, newFilter: filter) { newImage in
-                                                if let newImage = newImage {
-                                                    loadedImages[photoId] = newImage
-                                                }
-                                                if showLoader { isApplyingT32 = false }
-                                            }
-                                        }
-                                    }) {
-                                        VStack(spacing: 4) {
-                                            ZStack {
-                                                filter.icon
-                                                    .resizable()
-                                                    .scaledToFit()
-                                                    .frame(width: 60, height: 60)
-                                                
-                                                if filter.isPro && !storeManager.isPro {
-                                                    Image(systemName: "lock.fill")
-                                                        .font(.system(size: 14))
-                                                        .foregroundColor(.white)
-                                                        .padding(8)
-                                                        .background(Color.black.opacity(0.5))
-                                                        .clipShape(Circle())
-                                                }
+                // MARK: - Date Stamp Toggle + Filter Strip
+                VStack(spacing: 4) {
+                    if selectedFilter == .t34 {
+                        VStack(spacing: 6) {
+                            Text("Date Stamp")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundColor(.white)
+                            DateStampSwitch(isOn: $dateStampEnabled)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+
+                    ScrollViewReader { proxy in
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            ZStack(alignment: .topLeading) {
+                                if let rect = filterRects[selectedFilter] {
+                                    RoundedRectangle(cornerRadius: 30)
+                                        .fill(Color.white)
+                                        .frame(width: rect.width, height: rect.height)
+                                        .offset(x: rect.minX, y: rect.minY)
+                                        .allowsHitTesting(false)
+                                        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: rect)
+                                }
+                                
+                                HStack(spacing: 24) {
+                                    ForEach(filters, id: \.self) { filter in
+                                        Button(action: {
+                                            if filter.isPro && !storeManager.isPro {
+                                                showProScreen = true
+                                                return
                                             }
                                             
-                                            Text(filter.title)
-                                                .font(.system(size: 15, weight: .medium))
-                                                .foregroundColor(selectedFilter == filter ? .black : .white)
-                                                .padding(.horizontal, 10)
-                                                .padding(.vertical, 6)
-                                                .background(
-                                                    GeometryReader { geo in
-                                                        Color.clear.preference(
-                                                            key: FilterRectKey.self,
-                                                            value: [filter: geo.frame(in: .named("filterHStack"))]
-                                                        )
+                                            if selectedFilter == filter {
+                                                if storeManager.isPro { showFilterAdjustView = true }
+                                                else { showProScreen = true }
+                                            } else {
+                                                let photo = photoManager.photos[currentIndex]
+                                                let photoId = photo.id
+                                                selectedFilter = filter
+                                                photoManager.updateFilter(for: photoId, newFilter: filter) { newImage in
+                                                    if let newImage = newImage {
+                                                        loadedImages[photoId] = newImage
                                                     }
-                                                )
+                                                }
+                                            }
+                                        }) {
+                                            VStack(spacing: 4) {
+                                                ZStack {
+                                                    filter.icon
+                                                        .resizable()
+                                                        .scaledToFit()
+                                                        .frame(width: 60, height: 60)
+                                                    
+                                                    if filter.isPro && !storeManager.isPro {
+                                                        Image(systemName: "lock.fill")
+                                                            .font(.system(size: 14))
+                                                            .foregroundColor(.white)
+                                                            .padding(8)
+                                                            .background(Color.black.opacity(0.5))
+                                                            .clipShape(Circle())
+                                                    }
+                                                }
+                                                
+                                                Text(filter.title)
+                                                    .font(.system(size: 15, weight: .medium))
+                                                    .foregroundColor(selectedFilter == filter ? .black : .white)
+                                                    .padding(.horizontal, 10)
+                                                    .padding(.vertical, 6)
+                                                    .background(
+                                                        GeometryReader { geo in
+                                                            Color.clear.preference(
+                                                                key: FilterRectKey.self,
+                                                                value: [filter: geo.frame(in: .named("filterHStack"))]
+                                                            )
+                                                        }
+                                                    )
+                                            }
                                         }
+                                        .id(filter)
                                     }
-                                    .id(filter)
                                 }
+                                .padding(.horizontal)
+                                .padding(.vertical, 8)
                             }
-                            .padding(.horizontal)
-                            .padding(.vertical, 8)
+                            .coordinateSpace(name: "filterHStack")
+                            .onPreferenceChange(FilterRectKey.self) { filterRects = $0 }
                         }
-                        .coordinateSpace(name: "filterHStack")
-                        .onPreferenceChange(FilterRectKey.self) { filterRects = $0 }
-                    }
-                    .onAppear {
-                        proxy.scrollTo(selectedFilter, anchor: .center)
-                    }
-                    .onChange(of: selectedFilter) { _ in
-                        if !ignoreScrollChange {
-                            withAnimation { proxy.scrollTo(selectedFilter, anchor: .center) }
+                        .onAppear {
+                            proxy.scrollTo(selectedFilter, anchor: .center)
                         }
-                        ignoreScrollChange = false
+                        .onChange(of: selectedFilter) { _ in
+                            if !ignoreScrollChange {
+                                withAnimation { proxy.scrollTo(selectedFilter, anchor: .center) }
+                            }
+                            ignoreScrollChange = false
+                        }
                     }
+                    .frame(height: 110)
                 }
-                .frame(height: 110)
             }
         }
         .onAppear {
             currentIndex = min(initialIndex, max(0, photoManager.photos.count - 1))
             if !photoManager.photos.isEmpty {
                 let photo = photoManager.photos[currentIndex]
-                selectedFilter = (photo.filter.isPro && !storeManager.isPro) ? .normal : photo.filter
+                var f = photo.filter
+                if f == .t32Update { f = .t34 }
+                selectedFilter = (f.isPro && !storeManager.isPro) ? .normal : f
                 filterIntensity = photo.filterIntensity
                 textureIntensity = photo.textureIntensity
                 exposureIntensity = photo.exposureIntensity
                 updateSlidingWindow(at: currentIndex)
-                photoManager.prefetchT32IfNeeded(for: photo.id, filterIntensity: photo.filterIntensity, textureIntensity: photo.textureIntensity, exposureIntensity: photo.exposureIntensity)
             }
-        }
-        .onDisappear {
-            // T32 cache persists until app kill for better UX when returning to camera
         }
         .onChange(of: currentIndex) { newIndex in
             guard !photoManager.photos.isEmpty else { return }
             
             let photo = photoManager.photos[newIndex]
-            selectedFilter = (photo.filter.isPro && !storeManager.isPro) ? .normal : photo.filter
+            var f = photo.filter
+            if f == .t32Update { f = .t34 }
+            selectedFilter = (f.isPro && !storeManager.isPro) ? .normal : f
             filterIntensity = photo.filterIntensity
             textureIntensity = photo.textureIntensity
             exposureIntensity = photo.exposureIntensity
             updateSlidingWindow(at: newIndex)
-            photoManager.prefetchT32IfNeeded(for: photo.id, filterIntensity: photo.filterIntensity, textureIntensity: photo.textureIntensity, exposureIntensity: photo.exposureIntensity)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: PhotoManager.t32ResultReadyNotification)) { notification in
-            guard let photoId = notification.userInfo?["photoId"] as? String,
-                  !photoManager.photos.isEmpty,
-                  currentIndex < photoManager.photos.count,
-                  photoManager.photos[currentIndex].id == photoId else { return }
-            let url = photoManager.filteredURL(for: photoId, filter: .t32Update)
-            DispatchQueue.global(qos: .userInitiated).async {
-                guard let img = UIImage(contentsOfFile: url.path) else { return }
-                DispatchQueue.main.async {
-                    var copy = loadedImages
-                    copy[photoId] = img
-                    loadedImages = copy
-                }
-            }
         }
         // Live Preview
         .onChange(of: filterIntensity) { _ in if showFilterAdjustView { schedulePreviewUpdate() } }
         .onChange(of: textureIntensity) { _ in if showFilterAdjustView { schedulePreviewUpdate() } }
         .onChange(of: exposureIntensity) { _ in if showFilterAdjustView { schedulePreviewUpdate() } }
-        // Save on Dismiss Adjust (runs on background for T32 so UI stays responsive)
         .onChange(of: showFilterAdjustView) { newValue in
             if !newValue {
                 updateTask?.cancel()
                 let photoId = photoManager.photos[currentIndex].id
-                if selectedFilter == .t32Update { isUpdatingIntensities = true }
+                isUpdatingIntensities = true
                 photoManager.updateIntensities(
                     for: photoId,
                     filterIntensity: filterIntensity,
@@ -788,8 +775,9 @@ struct FixedDateOverlay: View {
             let imageFrame = Self.imageDisplayFrame(viewSize: CGSize(width: w, height: h), imageSize: imgSize)
             let (cx, cy) = dateCenterInView(imageFrame: imageFrame)
             let dateAngle = FilmDateOverlay.defaultAngle(for: imgSize)
+            let previewFontSize = FilmDateOverlay.previewFontSize(for: imgSize, inViewSize: CGSize(width: w, height: h))
             Text(FilmDateOverlay.formattedDateString())
-                .font(.system(size: FilmDateOverlay.defaultSize, weight: DateStyle.fontWeight, design: .monospaced))
+                .font(.custom(FilmDateOverlay.swiftUIFontName, size: previewFontSize))
                 .foregroundColor(DateStyle.color)
                 .rotationEffect(.degrees(dateAngle))
                 .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)

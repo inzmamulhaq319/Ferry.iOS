@@ -9,6 +9,7 @@ import CoreImage
 
 enum DustAndDateEffectKeys {
     static let dateEnabled = "phase4DateEnabled"
+    static let dustEnabled = "phase4DustEnabled"
 }
 
 enum DustAndDateEffectUtils {
@@ -41,22 +42,18 @@ enum DustAndDateEffectUtils {
         """)
     }()
     
-    /// Applies T32 film dust when filter is T32. Date is drawn as draggable overlay in UI, not baked here.
-    /// logTiming: false when called from background prefetch (sirf user apply par time print ho).
+    /// Date is drawn as draggable overlay in UI (T34); not baked here for other filters.
     static func applyEffects(to image: UIImage, for filter: FilterType, logTiming: Bool = true) -> UIImage? {
-        var result = image
-        if filter == .t32Update {
-            let t0 = CFAbsoluteTimeGetCurrent()
-            if let withEffect = applyDustEffect(to: result, intensity: 1.0) {
-                result = withEffect
-                if logTiming { print(String(format: "[T32] dust/grain: %.2f s", CFAbsoluteTimeGetCurrent() - t0)) }
-            }
-        }
-        return result
+        return image
     }
     
     static func isDateEnabled() -> Bool {
         UserDefaults.standard.bool(forKey: DustAndDateEffectKeys.dateEnabled)
+    }
+
+    /// Dust overlay (T34/Apeninos/ASF) on when true. Default true so existing behaviour unchanged until user toggles.
+    static func isDustEnabled() -> Bool {
+        (UserDefaults.standard.object(forKey: DustAndDateEffectKeys.dustEnabled) as? Bool) ?? true
     }
     
     /// Slightly higher res for premium quality; grain at 0.27 keeps look refined.

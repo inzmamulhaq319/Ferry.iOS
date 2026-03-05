@@ -386,13 +386,13 @@ struct ContentView: View {
                 }
                 
                 let lastFilter = FilterType(rawValue: lastFilterRaw) ?? .normal
-                if lastFilter.isPro && !storeManager.isPro {
+                if lastFilter == .t32Update {
+                    selectedFilter = .t34
+                    lastFilterRaw = FilterType.t34.rawValue
+                } else if lastFilter.isPro && !storeManager.isPro {
                     selectedFilter = .normal
                 } else {
                     selectedFilter = lastFilter
-                }
-                if selectedFilter == .t32Update {
-                    PhotoManager.shared.warmT32PipelineIfNeeded()
                 }
                 if flashOnEnabled {
                     flashIndex = 1
@@ -411,9 +411,6 @@ struct ContentView: View {
                     showProScreen = true
                 } else {
                     lastFilterRaw = newValue.rawValue
-                    if newValue == .t32Update {
-                        PhotoManager.shared.warmT32PipelineIfNeeded()
-                    }
                 }
             }
         }

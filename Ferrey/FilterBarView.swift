@@ -17,14 +17,14 @@ struct FilterBarView: View {
     @State private var showProScreen = false
     @State private var showExamples = false
     
-    let filters: [FilterType] = FilterType.allCases
+    let filters: [FilterType] = FilterType.visibleFilterCases
     
     @State private var filterRects: [FilterType: CGRect] = [:]
     @State private var didInitialScroll = false   // ensures we scroll only once
     
     var body: some View {
         VStack(spacing: 0) {
-            if selectedFilter == .t32Update {
+            if selectedFilter == .t34 {
                 VStack(spacing: 6) {
                     Text("Date Stamp")
                         .font(.system(size: 12, weight: .medium))
@@ -49,7 +49,7 @@ struct FilterBarView: View {
                 .padding(.vertical, 6)
                 .background(RoundedRectangle(cornerRadius: 50).fill(Color.black))
             }
-            .padding(.top, selectedFilter == .t32Update ? 0 : 10)
+            .padding(.top, selectedFilter == .t34 ? 0 : 10)
             .padding(.horizontal)
             .padding(.horizontal)
             
@@ -145,8 +145,8 @@ struct FilterBarView: View {
     }
 }
 
-// MARK: - Switch for Date Stamp (T32) – 3D knob + glow, app theme
-private struct DateStampSwitch: View {
+// MARK: - Switch for Date Stamp (T34) – 3D knob + glow, app theme
+struct DateStampSwitch: View {
     @Binding var isOn: Bool
     
     private let trackWidth: CGFloat = 44
@@ -215,7 +215,7 @@ struct SamplesView: View {
     @Environment(\.presentationMode) var presentationMode
     @State private var showProScreen = false
     
-    let filters: [FilterType] = FilterType.allCases
+    let filters: [FilterType] = FilterType.visibleFilterCases
     @State private var filterRects: [FilterType: CGRect] = [:]
     @State private var didInitialScroll = false
     

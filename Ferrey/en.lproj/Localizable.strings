@@ -29,7 +29,7 @@
 "settings.section.effects" = "Effects";
 "settings.section.dustAndDateEffect" = "Dust and Date Effect";
 "settings.section.dustAndDate" = "Dust and Date";
-"settings.toggle.dustEffect" = "Dust";
+"settings.toggle.dustEffect" = "Dust Overlay";
 "settings.effect.dustIntensity" = "Intensity";
 "settings.slider.dustIntensity" = "Intensity";
 "settings.toggle.dateStamp" = "Date Stamp";

@@ -10,16 +10,16 @@ import UIKit
 
 enum FilmDateOverlay {
     
-    /// Default position: bottom-left corner, wall ke kareeb. (0,0)=top-left, (1,1)=bottom-right.
-    static let defaultPosition = CGPoint(x: 0.008, y: 0.97)
-    /// Portrait default: vertical (-90°). Landscape: horizontal (0°) – detect from image size.
-    static let defaultAngle: CGFloat = -90
-    static let defaultSize: CGFloat = 15
+    /// Position: left edge ~1.5–2% from left; bottom of text ~25% from bottom. (0,0)=top-left, (1,1)=bottom-right.
+    static let defaultPosition = CGPoint(x: 0.09, y: 0.78)
+    /// Portrait default: vertical (+90°) so text reads top → bottom (country code at bottom).
+    static let defaultAngle: CGFloat = 90
+    static let defaultSize: CGFloat = 24   // in-app preview size
     
     /// Horizontal (landscape) picture = width > height. Date angle usi ke mutabiq.
     static func isLandscape(_ size: CGSize) -> Bool { size.width > size.height }
     
-    /// Portrait: -90° (vertical); landscape: 0° (horizontal along bottom).
+    /// Portrait: +90° (vertical top → bottom); landscape: 0° (horizontal along bottom).
     static func defaultAngle(for imageSize: CGSize) -> CGFloat {
         isLandscape(imageSize) ? 0 : defaultAngle
     }
@@ -39,8 +39,16 @@ enum FilmDateOverlay {
         DateStyle.formattedString(from: date)
     }
     
+    /// Fixed DS Digital font name used everywhere (PostScript name, not filename).
+    /// DS-DIGI.TTF exposes the font as \"DS-Digital\".
+    static let swiftUIFontName: String = "DS-Digital"
+    
     private static func dateFont(size: CGFloat) -> UIFont {
-        UIFont.monospacedDigitSystemFont(ofSize: size, weight: DateStyle.uiFontWeight)
+        if let font = UIFont(name: "DS-Digital", size: size) {
+            return font
+        }
+        // Safety fallback only if DS-DIGI is not found (should not happen if font is bundled correctly).
+        return UIFont.systemFont(ofSize: size)
     }
     
     /// Optional soft shadow so it sits in the image
@@ -51,10 +59,16 @@ enum FilmDateOverlay {
     /// Inset from edges when drawing (export/bake) – corner ke kareeb allow.
     private static let defaultInset: CGFloat = 20
     
-    /// Text size relative to image short side; +5pt for slightly larger date stamp.
+    /// Text size for saved photo = fixed percentage of image short side (a bit larger).
     private static func fontSize(for imageSize: CGSize) -> CGFloat {
         let short = min(imageSize.width, imageSize.height)
-        return max(33, min(77, short * 0.012 + 37))
+        return max(32, short * 0.04) // ~4% of short side, at least 32pt
+    }
+    
+    /// On-screen preview size = same percentage of on-screen image, so scale matches.
+    static func previewFontSize(for imageSize: CGSize, inViewSize viewSize: CGSize) -> CGFloat {
+        let shortView = min(viewSize.width, viewSize.height)
+        return max(18, shortView * 0.04)
     }
     
     // MARK: - Draw (vertical, any position)
@@ -142,7 +156,7 @@ enum FilmDateOverlay {
         UserDefaults.standard.set(Double(value), forKey: "T32DateSize_" + id)
     }
     
-    /// First time (no saved angle): vertical (-90°). After user rotates, saved angle is used.
+    /// First time (no saved angle): vertical (+90°). After user rotates, saved angle is used.
     static func angle(forPhotoId id: String) -> CGFloat {
         let key = "T32DateAngle_" + id
         guard UserDefaults.standard.object(forKey: key) != nil else { return defaultAngle }

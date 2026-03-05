@@ -12,7 +12,7 @@ import CoreImage
 enum T33Filter {
     static let lutFileName = "T32 update"
     
-    /// dust_04 overlay – same 25% blend (Data Set/NSDataAsset se load).
+    /// dust_04 overlay (Data Set/NSDataAsset se load).
     /// Extent (0,0,w,h) normalize taake capture par white layer na aaye.
     static func applyDustOverlay(photo: CIImage, extent: CGRect) -> CIImage? {
         let origin = extent.origin
@@ -55,11 +55,11 @@ enum T33Filter {
         screen.setValue(photoWork, forKey: kCIInputBackgroundImageKey)
         screen.setValue(dustScaled, forKey: kCIInputImageKey)
         guard let dusted = screen.outputImage?.cropped(to: normExtent) else { return photo }
-        // 25% dust, 75% original – dissolve se strength control
+        // 80% dust, 20% original – dissolve se strength control
         guard let dissolve = CIFilter(name: "CIDissolveTransition") else { return dusted }
         dissolve.setValue(photoWork, forKey: kCIInputImageKey)
         dissolve.setValue(dusted, forKey: kCIInputTargetImageKey)
-        dissolve.setValue(0.25, forKey: kCIInputTimeKey)
+        dissolve.setValue(0.80, forKey: kCIInputTimeKey)
         return dissolve.outputImage?.cropped(to: normExtent)
     }
 }

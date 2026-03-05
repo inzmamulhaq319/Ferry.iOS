@@ -11,21 +11,23 @@ import UIKit
 
 enum DateStyle {
 
-    /// Format: Day-Month-Year e.g. "24 Feb 2026"
+    /// Format: day month year country code e.g. "3 3 26 br" — country from device region
     static func formattedString(from date: Date) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "d MMM yyyy"
-        return formatter.string(from: date)
+        formatter.dateFormat = "d M yy"
+        let datePart = formatter.string(from: date)
+        let countryCode = (Locale.current.region?.identifier ?? "US").uppercased()
+        return "\(datePart) \(countryCode)"
     }
 
-    static var color: Color { Color(red: 1.0, green: 0.82, blue: 0.22) }
+    /// #e0cc6a
+    static var color: Color { Color(red: 224/255.0, green: 204/255.0, blue: 106/255.0) }
 
     static var uiColor: UIColor {
-        UIColor(red: 1.0, green: 0.82, blue: 0.22, alpha: 0.95)
+        UIColor(red: 224/255.0, green: 204/255.0, blue: 106/255.0, alpha: 0.95)
     }
 
-    static var fontWeight: Font.Weight { .bold }
-
-    static var uiFontWeight: UIFont.Weight { .bold }
+    static var fontWeight: Font.Weight { .medium }
+    static var uiFontWeight: UIFont.Weight { .medium }
 }
