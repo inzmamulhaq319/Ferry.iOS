@@ -5,6 +5,8 @@
 	<key>UIAppFonts</key>
 	<array>
 		<string>DS-DIGI.TTF</string>
+		<string>DrukTextWideTrial-Medium.otf</string>
+		<string>Fonts/DrukTextWideTrial-Medium.otf</string>
 	</array>
 </dict>
 </plist>

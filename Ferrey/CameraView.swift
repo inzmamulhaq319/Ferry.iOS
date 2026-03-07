@@ -197,7 +197,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
     private func setupSession() {
         captureSession = AVCaptureSession()
         captureSession.beginConfiguration()
-        // Device ki highest available resolution – .high support ho to use, warna .photo
+        // Use highest resolution: .high if supported, else .photo
         if captureSession.canSetSessionPreset(.high) {
             captureSession.sessionPreset = .high
         } else {
@@ -259,7 +259,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         }
     }
     
-    /// Auto-focus on scene (human/object) – front & back. Front par continuous na ho to single AF + periodic retry.
+    /// Auto-focus on scene (human/object), front and back. If front doesn’t support continuous, use single AF + periodic retry.
     private func configureContinuousAutoFocus(for device: AVCaptureDevice) {
         stopFrontCameraFocusTimer()
         do {
@@ -298,7 +298,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         frontCameraFocusTimer = nil
     }
     
-    /// Single AF at center – front camera ke liye periodic retry.
+    /// Single AF at center; periodic retry for front camera.
     private func triggerSingleFocusAtCenter() {
         guard let device = currentDeviceInput?.device, device.position == .front else {
             stopFrontCameraFocusTimer()
@@ -318,7 +318,7 @@ class CameraViewController: UIViewController, AVCapturePhotoCaptureDelegate, AVC
         } catch {}
     }
     
-    /// Jab focus hil jaye (subject area change) – ek baar center par focus force karo, phir wapas continuous AF taake retry hota rahe.
+    /// On subject area change: force center focus once, then back to continuous AF so retry continues.
     private func retryFocusAfterSubjectAreaChange() {
         guard let device = currentDeviceInput?.device else { return }
         do {

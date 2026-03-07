@@ -2,7 +2,7 @@
 //  FilmDateOverlay.swift
 //  Ferrey
 //
-//  Date stamp design for T32 / dust filter. Style only – no filter logic.
+//  Date stamp design for T34 / dust filter. Style only.
 //
 
 import Foundation
@@ -16,7 +16,7 @@ enum FilmDateOverlay {
     static let defaultAngle: CGFloat = 90
     static let defaultSize: CGFloat = 24   // in-app preview size
     
-    /// Horizontal (landscape) picture = width > height. Date angle usi ke mutabiq.
+    /// Landscape = width > height. Date angle follows that.
     static func isLandscape(_ size: CGSize) -> Bool { size.width > size.height }
     
     /// Portrait: +90° (vertical top → bottom); landscape: 0° (horizontal along bottom).
@@ -24,7 +24,7 @@ enum FilmDateOverlay {
         isLandscape(imageSize) ? 0 : defaultAngle
     }
     
-    /// Display dimensions (orientation ke mutabiq) – horizontal/portrait sahi detect ke liye.
+    /// Display size for orientation; used to detect landscape/portrait.
     static func displaySize(for image: UIImage) -> CGSize {
         let s = image.size
         switch image.imageOrientation {
@@ -56,19 +56,25 @@ enum FilmDateOverlay {
         UIColor.black.withAlphaComponent(0.5)
     }
     
-    /// Inset from edges when drawing (export/bake) – corner ke kareeb allow.
+    /// Inset from edges when drawing (export/bake).
     private static let defaultInset: CGFloat = 20
     
-    /// Text size for saved photo = fixed percentage of image short side (a bit larger).
+    /// Reference view short side (points) so baked size matches full-screen.
+    private static let referenceViewShort: CGFloat = 400
+    
+    /// Baked date size so saved photo matches app overlay at full-screen.
     private static func fontSize(for imageSize: CGSize) -> CGFloat {
         let short = min(imageSize.width, imageSize.height)
-        return max(32, short * 0.04) // ~4% of short side, at least 32pt
+        guard short > 0 else { return 24 }
+        let refView = CGSize(width: referenceViewShort, height: referenceViewShort)
+        let appSize = previewFontSize(for: imageSize, inViewSize: refView)
+        return appSize * (short / referenceViewShort)
     }
     
-    /// On-screen preview size = same percentage of on-screen image, so scale matches.
+    /// On-screen preview size (app gallery); same visual size as baked image.
     static func previewFontSize(for imageSize: CGSize, inViewSize viewSize: CGSize) -> CGFloat {
         let shortView = min(viewSize.width, viewSize.height)
-        return max(18, shortView * 0.04)
+        return max(18, shortView * 0.05)
     }
     
     // MARK: - Draw (vertical, any position)
@@ -94,6 +100,10 @@ enum FilmDateOverlay {
         
         let styleColor = DateStyle.uiColor
         
+        // Scale kern so full-screen spacing matches app.
+        let short = min(size.width, size.height)
+        let bakedKern: CGFloat = short > 0 ? 3.5 * (short / referenceViewShort) : 3.5
+        
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let result = renderer.image { ctx in
             toDraw.draw(at: .zero)
@@ -102,7 +112,8 @@ enum FilmDateOverlay {
             let text = DateStyle.formattedString(from: date)
             let attributes: [NSAttributedString.Key: Any] = [
                 .font: font,
-                .foregroundColor: styleColor
+                .foregroundColor: styleColor,
+                .kern: bakedKern
             ]
             
             let attr = NSAttributedString(string: text, attributes: attributes)

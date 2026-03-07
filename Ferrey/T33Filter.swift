@@ -12,8 +12,8 @@ import CoreImage
 enum T33Filter {
     static let lutFileName = "T32 update"
     
-    /// dust_04 overlay (Data Set/NSDataAsset se load).
-    /// Extent (0,0,w,h) normalize taake capture par white layer na aaye.
+    /// dust_04 overlay loaded from Data Set/NSDataAsset.
+    /// Normalize extent to (0,0,w,h) so capture has no white layer.
     static func applyDustOverlay(photo: CIImage, extent: CGRect) -> CIImage? {
         let origin = extent.origin
         let normExtent = CGRect(origin: .zero, size: extent.size)
@@ -23,7 +23,7 @@ enum T33Filter {
         } else {
             photoWork = photo
         }
-        // dust_04 – Data Set se load; pehle NSDataAsset, phir bundle, phir named
+        // Load dust_04: NSDataAsset, then bundle, then named
         let dustImage: UIImage? = {
             if let asset = NSDataAsset(name: "dust_04"), let img = UIImage(data: asset.data) { return img }
             if let url = Bundle.main.url(forResource: "dust_04", withExtension: "webp"),
@@ -55,7 +55,7 @@ enum T33Filter {
         screen.setValue(photoWork, forKey: kCIInputBackgroundImageKey)
         screen.setValue(dustScaled, forKey: kCIInputImageKey)
         guard let dusted = screen.outputImage?.cropped(to: normExtent) else { return photo }
-        // 80% dust, 20% original – dissolve se strength control
+        // 80% dust, 20% original via dissolve
         guard let dissolve = CIFilter(name: "CIDissolveTransition") else { return dusted }
         dissolve.setValue(photoWork, forKey: kCIInputImageKey)
         dissolve.setValue(dusted, forKey: kCIInputTargetImageKey)
@@ -64,10 +64,11 @@ enum T33Filter {
     }
 }
 
-// MARK: - T34 (same file, neeche) – "Dust t32" .png overlay
+// MARK: - T34 – "Dust t32" .png overlay
 enum T34Filter {
-    /// T34: "Dust t32" (.png) capture par layer – Bundle se load, 50% mix taake clearly dikhe.
-    static func applyDustOverlay(photo: CIImage, extent: CGRect) -> CIImage? {
+    /// T34: "Dust t32" overlay. intensity 0 = no dust, 1 = full dust; dissolve blend in between.
+    static func applyDustOverlay(photo: CIImage, extent: CGRect, intensity: Double = 1.0) -> CIImage? {
+        guard intensity > 0 else { return photo }
         let dustImage: UIImage? = {
             if let img = UIImage(named: "Dust t32", in: Bundle.main, compatibleWith: nil) { return img }
             if let img = UIImage(named: "Dust t32") { return img }
@@ -94,10 +95,15 @@ enum T34Filter {
         let ty = (extent.height - scaledH) / 2
         let t = CGAffineTransform(scaleX: scale, y: scale).translatedBy(x: tx / scale, y: ty / scale)
         let dustScaled = dustAdjusted.transformed(by: t).cropped(to: extent)
-        // Screen blend: sirf dust/specks apply – black = no change, light = overlay. 100% use.
         guard let screen = CIFilter(name: "CIScreenBlendMode") else { return photo }
         screen.setValue(photo, forKey: kCIInputBackgroundImageKey)
         screen.setValue(dustScaled, forKey: kCIInputImageKey)
-        return screen.outputImage?.cropped(to: extent)
+        guard let dusted = screen.outputImage?.cropped(to: extent) else { return photo }
+        if intensity >= 1.0 { return dusted }
+        guard let dissolve = CIFilter(name: "CIDissolveTransition") else { return dusted }
+        dissolve.setValue(photo, forKey: kCIInputImageKey)
+        dissolve.setValue(dusted, forKey: kCIInputTargetImageKey)
+        dissolve.setValue(intensity, forKey: kCIInputTimeKey)
+        return dissolve.outputImage?.cropped(to: extent)
     }
 }

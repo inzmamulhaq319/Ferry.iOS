@@ -9,7 +9,8 @@ import CoreImage
 
 enum DustAndDateEffectKeys {
     static let dateEnabled = "phase4DateEnabled"
-    static let dustEnabled = "phase4DustEnabled"
+    /// 0.0–1.0 (0%–100%) dust overlay strength for T34 only.
+    static let dustIntensity = "phase4DustIntensity"
 }
 
 enum DustAndDateEffectUtils {
@@ -20,7 +21,7 @@ enum DustAndDateEffectUtils {
     private static var cachedDistortLuma: CIImage?
     private static let grainCacheSize: CGFloat = 2048
     
-    /// Natural grain – dark areas mein grain almost off (0.5 = no change), taake shadows khrab na hon.
+    /// Natural grain; dark areas almost no change (0.5) so shadows stay clean.
     private static let grainKernel: CIColorKernel? = {
         CIColorKernel(source: """
             kernel vec4 remapGrainForOverlay(__sample base, __sample n, __sample lowFreq, __sample distort) {
@@ -51,9 +52,11 @@ enum DustAndDateEffectUtils {
         UserDefaults.standard.bool(forKey: DustAndDateEffectKeys.dateEnabled)
     }
 
-    /// Dust overlay (T34/Apeninos/ASF) on when true. Default true so existing behaviour unchanged until user toggles.
-    static func isDustEnabled() -> Bool {
-        (UserDefaults.standard.object(forKey: DustAndDateEffectKeys.dustEnabled) as? Bool) ?? true
+    /// Dust overlay intensity 0.0–1.0 from stored 0–100%. If user never changed slider (no key), use 100%.
+    static func dustIntensity() -> Double {
+        guard UserDefaults.standard.object(forKey: DustAndDateEffectKeys.dustIntensity) != nil else { return 1.0 }
+        let percent = UserDefaults.standard.double(forKey: DustAndDateEffectKeys.dustIntensity)
+        return max(0, min(1, percent / 100.0))
     }
     
     /// Slightly higher res for premium quality; grain at 0.27 keeps look refined.
@@ -95,7 +98,7 @@ enum DustAndDateEffectUtils {
         return UIImage(cgImage: cgFull, scale: image.scale, orientation: image.imageOrientation)
     }
     
-    /// Contrast halka – zyada nahi taake dark areas crush na hon; shadow lift se darks preserve.
+    /// Slight contrast so dark areas don’t crush; shadow lift preserves darks.
     private static func applySlightContrast(photo: CIImage) -> CIImage? {
         guard let color = CIFilter(name: "CIColorControls") else { return nil }
         color.setValue(photo, forKey: kCIInputImageKey)
@@ -103,7 +106,7 @@ enum DustAndDateEffectUtils {
         return color.outputImage
     }
     
-    /// Dark areas ko thoda lift – crush na hon, detail rahe (green tint / khrab look kam).
+    /// Slight lift in dark areas to avoid crush and keep detail.
     private static func applyShadowLift(photo: CIImage) -> CIImage? {
         guard let gamma = CIFilter(name: "CIGammaAdjust") else { return nil }
         gamma.setValue(photo, forKey: kCIInputImageKey)
@@ -195,10 +198,10 @@ enum DustAndDateEffectUtils {
         return blend.outputImage?.cropped(to: extent)
     }
     
-    /// 35mm-style: bahut halka dust/specks – film imperfections jaisa
+    /// 35mm-style: very subtle dust/specks, film-like
     private static func applySubtleDustTexture(photo: CIImage, extent: CGRect, intensity: Double) -> CIImage? {
         guard let noise = CIFilter(name: "CIRandomGenerator")?.outputImage else { return nil }
-        let scale = max(0.0, min(1.0, intensity)) * 0.28  // 35mm – halka hi
+        let scale = max(0.0, min(1.0, intensity)) * 0.28
         
         let scaledNoise = noise.transformed(by: CGAffineTransform(scaleX: 1.15, y: 1.15))
             .cropped(to: extent)
@@ -224,7 +227,7 @@ enum DustAndDateEffectUtils {
         let dustLayer = speckKernel.apply(extent: extent, arguments: [mono, photo, Float(scale)])
         
         guard let dusted = dustLayer else { return photo }
-        // 35mm: zyada original, halka dust
+        // 35mm: more original, light dust
         let dustBlend = CIFilter(name: "CIDissolveTransition")!
         dustBlend.setValue(photo, forKey: kCIInputImageKey)
         dustBlend.setValue(dusted, forKey: kCIInputTargetImageKey)

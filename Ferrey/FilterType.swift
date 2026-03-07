@@ -122,8 +122,9 @@ struct FilterUtils {
         exposureFilter.setValue(exposureValue, forKey: kCIInputEVKey)
         processed = exposureFilter.outputImage ?? processed
 
-        if (type == .t34 || type == .apeninos || type == .asf) && DustAndDateEffectUtils.isDustEnabled() {
-            if let withDust = T34Filter.applyDustOverlay(photo: processed, extent: processed.extent) {
+        if type == .t34 {
+            let intensity = DustAndDateEffectUtils.dustIntensity()
+            if let withDust = T34Filter.applyDustOverlay(photo: processed, extent: processed.extent, intensity: intensity) {
                 processed = withDust
             }
         }

@@ -4,6 +4,7 @@
 
 import SwiftUI
 import SwiftRater
+import CoreText
 
 @main
 struct FerreyApp: App {
@@ -67,7 +68,17 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         // Kick off internal counters (must be called once on launch)
         SwiftRater.appLaunched()  // :contentReference[oaicite:3]{index=3}
         
+        // Register Druk font from bundle so it loads even if plist path differs
+        registerDrukFont()
+        
         return true
+    }
+    
+    private func registerDrukFont() {
+        if let url = Bundle.main.url(forResource: "DrukTextWideTrial-Medium", withExtension: "otf", subdirectory: "Fonts")
+            ?? Bundle.main.url(forResource: "DrukTextWideTrial-Medium", withExtension: "otf") {
+            CTFontManagerRegisterFontURLs([url] as CFArray, .process, true, nil)
+        }
     }
 }
 

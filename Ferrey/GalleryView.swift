@@ -207,6 +207,7 @@ struct FullImageView: View {
     @ObservedObject var photoManager = PhotoManager.shared
     @EnvironmentObject private var storeManager: StoreManager
     @AppStorage(DustAndDateEffectKeys.dateEnabled) private var dateStampEnabled: Bool = false
+    @AppStorage(DustAndDateEffectKeys.dustIntensity) private var dustIntensityPercent: Double = 100
     
     @State private var currentIndex: Int = 0
     @State private var selectedFilter: FilterType = .normal
@@ -227,6 +228,7 @@ struct FullImageView: View {
     @State private var loadedOriginals: [String: UIImage] = [:]
     
     @State private var updateTask: Task<Void, Never>?
+    @State private var dustUpdateTask: Task<Void, Never>?
     @State private var filterRects: [FilterType: CGRect] = [:]
     @State private var ignoreScrollChange = false
     @State private var isUpdatingIntensities = false
@@ -436,11 +438,28 @@ struct FullImageView: View {
                 // MARK: - Date Stamp Toggle + Filter Strip
                 VStack(spacing: 4) {
                     if selectedFilter == .t34 {
-                        VStack(spacing: 6) {
+                        VStack(spacing: 10) {
                             Text("Date Stamp")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundColor(.white)
                             DateStampSwitch(isOn: $dateStampEnabled)
+                            HStack(spacing: 8) {
+                                Text("0%")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.8))
+                                Slider(value: $dustIntensityPercent, in: 0...100, step: 5)
+                                    .tint(.white)
+                                    .onChange(of: dustIntensityPercent) { _, _ in
+                                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                                        scheduleDustUpdate()
+                                    }
+                                Text("\(Int(dustIntensityPercent))%")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .frame(minWidth: 28, alignment: .trailing)
+                            }
+                            .padding(.horizontal, 20)
+                            .environment(\.layoutDirection, .leftToRight)
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -646,6 +665,47 @@ struct FullImageView: View {
             } catch { }
         }
     }
+    
+    // MARK: - Dust (T34) real-time
+    private func scheduleDustUpdate() {
+        dustUpdateTask?.cancel()
+        dustUpdateTask = Task {
+            do {
+                try await Task.sleep(nanoseconds: 30_000_000) // 30ms debounce
+                guard !photoManager.photos.isEmpty else { return }
+                let photo = photoManager.photos[currentIndex]
+                let originalURL = photoManager.originalURL(for: photo.id)
+                guard let original = UIImage(contentsOfFile: originalURL.path) else { return }
+                let adjusted = FilterUtils.applyAdjustedFilter(
+                    to: original,
+                    with: selectedFilter,
+                    filterIntensity: filterIntensity,
+                    textureIntensity: textureIntensity,
+                    exposureIntensity: exposureIntensity
+                )
+                try Task.checkCancellation()
+                await MainActor.run {
+                    if let img = adjusted { loadedImages[photo.id] = img }
+                }
+                try await Task.sleep(nanoseconds: 500_000_000) // 500ms then save
+                try Task.checkCancellation()
+                await MainActor.run {
+                    guard !photoManager.photos.isEmpty else { return }
+                    let photoId = photoManager.photos[currentIndex].id
+                    photoManager.updateIntensities(
+                        for: photoId,
+                        filterIntensity: filterIntensity,
+                        textureIntensity: textureIntensity,
+                        exposureIntensity: exposureIntensity
+                    ) { newImage in
+                        if let newImage = newImage {
+                            loadedImages[photoId] = newImage
+                        }
+                    }
+                }
+            } catch { }
+        }
+    }
 }
 
 // MARK: - Helpers
@@ -745,9 +805,6 @@ struct FilterAdjustView: View {
 struct FixedDateOverlay: View {
     var image: UIImage?
     
-    /// In-app gallery only: thora andar taake frame se out na lage. Save/share position unchanged.
-    private static let galleryPosition = CGPoint(x: 0.048, y: 0.905)
-    
     private static func imageDisplayFrame(viewSize: CGSize, imageSize: CGSize) -> CGRect {
         guard imageSize.width > 0, imageSize.height > 0 else {
             return CGRect(origin: .zero, size: viewSize)
@@ -761,7 +818,7 @@ struct FixedDateOverlay: View {
     }
     
     private func dateCenterInView(imageFrame: CGRect) -> (CGFloat, CGFloat) {
-        let p = Self.galleryPosition
+        let p = FilmDateOverlay.defaultPosition
         let cx = imageFrame.minX + p.x * imageFrame.width
         let cy = imageFrame.minY + p.y * imageFrame.height
         return (cx, cy)
@@ -778,6 +835,7 @@ struct FixedDateOverlay: View {
             let previewFontSize = FilmDateOverlay.previewFontSize(for: imgSize, inViewSize: CGSize(width: w, height: h))
             Text(FilmDateOverlay.formattedDateString())
                 .font(.custom(FilmDateOverlay.swiftUIFontName, size: previewFontSize))
+                .kerning(3.5)
                 .foregroundColor(DateStyle.color)
                 .rotationEffect(.degrees(dateAngle))
                 .shadow(color: .black.opacity(0.5), radius: 2, x: 0, y: 1)

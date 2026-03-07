@@ -33,7 +33,6 @@ struct SettingsView: View {
     @AppStorage("flashOnEnabled")         private var flashOnEnabled: Bool          = false
     
     @AppStorage("volumeShutterEnabled")   private var volumeShutterEnabled: Bool    = false
-    @AppStorage(DustAndDateEffectKeys.dustEnabled) private var dustEffectEnabled: Bool = true
 
     var body: some View {
         NavigationView {
@@ -85,7 +84,6 @@ struct SettingsView: View {
                 
                 // MARK: — Interface Section
                 Section(header: Text("settings.section.interface")) {
-                    Toggle("settings.toggle.dustEffect", isOn: $dustEffectEnabled)
                     lockedToggle("settings.toggle.livePreview", isOn: $livePreviewEnabled)
                     lockedToggle("settings.toggle.gridOverlay", isOn: $gridOverlayEnabled)
                     lockedToggle("settings.toggle.hideLogo", isOn: $hideLogoEnabled)

@@ -18,10 +18,25 @@ extension Bundle {
 }
 
 extension Font {
+
+    
     static func druk(size: CGFloat) -> Font {
-        // Temporary: DrukTextWide font removed, use plain system font instead.
-        return .system(size: size, weight: .regular, design: .default)
+//        for family in UIFont.familyNames {
+//            print("\(family):")
+//            for font in UIFont.fontNames(forFamilyName: family) {
+//                print("  \(font)")
+//            }
+//        }
+
+        guard let customFont = UIFont(name: "DrukTextWideTrial-Medium", size: size) else {
+            fatalError("""
+                Failed to load the "DrukTextWide" font.
+                Make sure the font file is included in the project and the font name is spelled correctly.
+                """)
+        }
+        return Font(UIFontMetrics.default.scaledFont(for: customFont))
     }
+    
 }
 
 extension UIImage {
