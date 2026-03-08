@@ -116,7 +116,7 @@ struct ProScreen: View {
                     
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 16) {
-                            ForEach(FilterType.allCases.filter { $0 != .normal }, id: \.self) { filter in
+                            ForEach(FilterType.allCases.filter { $0 != .normal && $0 != .t32Update }, id: \.self) { filter in
                                 VStack(spacing: 4) {
                                     ZStack {
                                         filter.icon

@@ -123,9 +123,26 @@ struct FilterUtils {
         processed = exposureFilter.outputImage ?? processed
 
         if type == .t34 {
-            let intensity = DustAndDateEffectUtils.dustIntensity()
+            // Dust overlay driven by texture slider: 0 = no dust, 1 = full dust
+            let intensity = textureIntensity
             if let withDust = T34Filter.applyDustOverlay(photo: processed, extent: processed.extent, intensity: intensity) {
                 processed = withDust
+            }
+        } else if type != .normal && textureIntensity > 0 {
+            // Texture overlay for non-T34, non-Normal filters (Apeninos, ASF, B&W, etc.)
+            if let noise = CIFilter(name: "CIRandomGenerator")?.outputImage {
+                let noiseProcessed = noise
+                    .applyingFilter("CIColorControls", parameters: [
+                        "inputSaturation": 0,
+                        "inputContrast": textureIntensity * 0.70
+                    ])
+                    .cropped(to: processed.extent)
+                let blend = CIFilter(name: "CIOverlayBlendMode")!
+                blend.setValue(noiseProcessed, forKey: kCIInputImageKey)
+                blend.setValue(processed, forKey: kCIInputBackgroundImageKey)
+                if let blended = blend.outputImage {
+                    processed = blended
+                }
             }
         }
 
@@ -309,6 +326,7 @@ class PhotoManager: ObservableObject {
     func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true, completion: (() -> Void)? = nil) {
         let id = UUID().uuidString
         let applyFullEffects = (filter != .normal)
+        // Default 100% texture for any filter except Normal; Normal stays 0%
         let textureValue = applyFullEffects ? 1.0 : 0.0
         let exposureValue = self.lastCapturedExposure
         let origURL = originalURL(for: id)
@@ -367,7 +385,8 @@ class PhotoManager: ObservableObject {
         if photo.filter == newFilter { completion(nil); return }
         
         let intensity = photo.filterIntensity
-        let texture = photo.textureIntensity
+        // When switching from Normal to any other filter, use 100% texture
+        let texture = (newFilter != .normal && photo.filter == .normal) ? 1.0 : photo.textureIntensity
         let exposure = photo.exposureIntensity
         let origURL = originalURL(for: id)
         let filtURL = filteredURL(for: id, filter: newFilter)
@@ -394,6 +413,7 @@ class PhotoManager: ObservableObject {
             }
             DispatchQueue.main.async {
                 self.photos[index].filter = newFilter
+                self.photos[index].textureIntensity = texture
                 self.photos[index].lastUpdated = Date()
                 self.save()
                 completion(filtered)
