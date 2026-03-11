@@ -407,8 +407,8 @@ struct FullImageView: View {
                             ZStack {
                                 // Check if we are showing Original (Long Press) or Edited
                                 if let img = (showOriginal && index == currentIndex ? loadedOriginals[photo.id] : loadedImages[photo.id]) {
-                                    let showDate = selectedFilter == .t34 && dateStampEnabled && index == currentIndex && !isUpdatingIntensities
-                                    ZoomableImageView(image: img, showDateOverlay: showDate)
+                                    // Date is now baked at capture time; avoid drawing it again in gallery.
+                                    ZoomableImageView(image: img, showDateOverlay: false)
                                     .tag(index)
                                 } else {
                                     // Fallback placeholder only if something goes wrong
@@ -433,18 +433,8 @@ struct FullImageView: View {
                         .onEnded { _ in showOriginal = false }
                 )
                 
-                // MARK: - Date Stamp Toggle + Filter Strip
+                // MARK: - Filter Strip
                 VStack(spacing: 4) {
-                    if selectedFilter == .t34 {
-                        VStack(spacing: 6) {
-                            Text("Date Stamp")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(.white)
-                            DateStampSwitch(isOn: $dateStampEnabled)
-                        }
-                        .frame(maxWidth: .infinity)
-                    }
-
                     ScrollViewReader { proxy in
                         ScrollView(.horizontal, showsIndicators: false) {
                             ZStack(alignment: .topLeading) {

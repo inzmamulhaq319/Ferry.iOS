@@ -24,32 +24,27 @@ struct FilterBarView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            if selectedFilter == .t34 {
-                VStack(spacing: 6) {
-                    Text("Date Stamp")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(.white)
-                    DateStampSwitch(isOn: $dateStampEnabled)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 50)
-                .padding(.bottom, 0)
-            }
-            
             HStack {
                 Spacer()
-                HStack(spacing: 4) {
+                HStack(spacing: 13) {
+                    if selectedFilter == .t34 {
+                        DateStampSwitch(isOn: $dateStampEnabled)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                    }
                     
-                    Text("filter.sample")
-                        .font(.system(size: 12, weight: .light))
-                        .foregroundColor(.white)
+                    Button(action: { showExamples = true }) {
+                        Text("filter.sample")
+                            .font(.system(size: 12, weight: .light))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 50).fill(Color.black))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .onTapGesture { showExamples = true }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 50).fill(Color.black))
             }
-            .padding(.top, selectedFilter == .t34 ? 0 : 10)
+            .padding(.top, 15)
             .padding(.horizontal)
             .padding(.horizontal)
             
@@ -130,6 +125,7 @@ struct FilterBarView: View {
                     }
                     // IMPORTANT: No onChange(selectedFilter) here — no auto-scroll on tap
                 }
+                .padding(.top, 7)
         }
         .clipped()
         .background(.darkGray)
@@ -145,62 +141,29 @@ struct FilterBarView: View {
     }
 }
 
-// MARK: - Switch for Date Stamp (T34) – 3D knob + glow, app theme
+// MARK: - Date Stamp Toggle (T34) – Circle style, black & white
 struct DateStampSwitch: View {
     @Binding var isOn: Bool
-    
-    private let trackWidth: CGFloat = 44
-    private let trackHeight: CGFloat = 24
-    private let thumbSize: CGFloat = 20
-    private let padding: CGFloat = 2
-    
+
     var body: some View {
         Button(action: {
             withAnimation(.spring(response: 0.2, dampingFraction: 0.72)) {
                 isOn.toggle()
             }
         }) {
-            ZStack(alignment: isOn ? .trailing : .leading) {
-                RoundedRectangle(cornerRadius: trackHeight / 2)
-                    .fill(Color(.darkGray))
-                    .frame(width: trackWidth, height: trackHeight)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: trackHeight / 2)
-                            .stroke(Color.white.opacity(0.2), lineWidth: 1)
-                    )
-                    .shadow(color: .black.opacity(0.3), radius: 1, x: 0, y: 1)
+            ZStack {
+                // Outer circle (outline)
+                Circle()
+                    .stroke(Color.white, lineWidth: 2)
+                    .frame(width: 20, height: 20)
                 
-                RoundedRectangle(cornerRadius: (thumbSize + padding) / 2)
-                    .fill(
-                        LinearGradient(
-                            colors: isOn
-                                ? [Color.white, Color.white.opacity(0.7), Color.white.opacity(0.5)]
-                                : [Color.white.opacity(0.6), Color.white.opacity(0.35), Color.white.opacity(0.15)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .frame(width: thumbSize + padding, height: thumbSize + padding)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: (thumbSize + padding) / 2)
-                            .stroke(
-                                LinearGradient(
-                                    colors: [Color.white.opacity(0.85), Color.white.opacity(0.08)],
-                                    startPoint: .topLeading,
-                                    endPoint: .bottomTrailing
-                                ),
-                                lineWidth: 2
-                            )
-                    )
-                    .shadow(color: .black.opacity(0.6), radius: 4, x: 0, y: 4)
-                    .shadow(color: .black.opacity(0.35), radius: 2, x: 0, y: 2)
-                    .shadow(color: .black.opacity(0.2), radius: 1, x: 0, y: 1)
-                    .shadow(color: (isOn ? Color.white.opacity(0.35) : Color.clear), radius: 4, x: 0, y: 0)
-                    .shadow(color: (isOn ? Color.white.opacity(0.2) : Color.clear), radius: 8, x: 0, y: 0)
-                    .padding(.leading, padding)
-                    .padding(.trailing, isOn ? 0 : padding)
+                // Inner filled circle when active
+                if isOn {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 12, height: 12)
+                }
             }
-            .frame(width: trackWidth, height: trackHeight)
         }
         .buttonStyle(.plain)
     }

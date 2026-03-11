@@ -259,6 +259,8 @@ struct PhotoMetadata: Codable, Identifiable, Equatable {
     var textureIntensity: Double = 1.0
     var exposureIntensity: Double = 0.5
     var lastUpdated: Date = Date()
+    /// True if this photo was originally captured with T34 date baked into the pixels.
+    var hasBakedDate: Bool = false
 }
 
 class PhotoManager: ObservableObject {
@@ -344,9 +346,10 @@ class PhotoManager: ObservableObject {
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filteredImage, for: filter) {
                 filteredImage = withEffects
             }
+            // Bake date stamp into the filtered image at capture time (for T34 when enabled)
+            filteredImage = self.bakeDateIfNeeded(filteredImage, filter: filter, photoId: id)
             if self.autoSaveEnabled && shouldAutoSave {
-                let toSave = self.bakeDateIfNeeded(filteredImage, filter: filter, photoId: id)
-                UIImageWriteToSavedPhotosAlbum(toSave, nil, nil, nil)
+                UIImageWriteToSavedPhotosAlbum(filteredImage, nil, nil, nil)
             }
             if let data = original.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: origURL)
@@ -354,12 +357,15 @@ class PhotoManager: ObservableObject {
             if let data = filteredImage.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)
             }
+            let didBakeDate = (filter == .t34 && DustAndDateEffectUtils.isDateEnabled())
             let metadata = PhotoMetadata(
                 id: id,
                 filter: filter,
                 filterIntensity: 1.0,
                 textureIntensity: textureValue,
-                exposureIntensity: exposureValue
+                exposureIntensity: exposureValue,
+                lastUpdated: Date(),
+                hasBakedDate: didBakeDate
             )
             DispatchQueue.main.async {
                 withAnimation(.easeInOut(duration: 0.3)) {
@@ -407,6 +413,11 @@ class PhotoManager: ObservableObject {
             ) ?? original
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: newFilter) {
                 filtered = withEffects
+            }
+            // If this photo originally had a baked date, ensure it stays even when reapplying T34.
+            if photo.hasBakedDate && newFilter == .t34,
+               let withDate = FilmDateOverlay.apply(to: filtered) {
+                filtered = withDate
             }
             if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)

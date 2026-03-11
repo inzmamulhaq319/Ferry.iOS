@@ -312,7 +312,7 @@ struct ContentView: View {
                     FilterBarView(selectedFilter: $selectedFilter, showFilterBar: $showFilterBar)
                         .ignoresSafeArea()
                 }
-                .presentationDetents([.height(160)])
+                .presentationDetents([.height(150)])
                 .presentationDragIndicator(.visible)
             }
             .sheet(isPresented: $showSettings) {
