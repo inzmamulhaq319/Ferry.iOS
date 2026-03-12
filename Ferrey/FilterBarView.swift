@@ -44,7 +44,7 @@ struct FilterBarView: View {
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.top, 15)
+            .padding(.top, 10)
             .padding(.horizontal)
             .padding(.horizontal)
             
@@ -125,7 +125,7 @@ struct FilterBarView: View {
                     }
                     // IMPORTANT: No onChange(selectedFilter) here — no auto-scroll on tap
                 }
-                .padding(.top, 7)
+                .padding(.top, 10)
         }
         .clipped()
         .background(.darkGray)
@@ -141,7 +141,7 @@ struct FilterBarView: View {
     }
 }
 
-// MARK: - Date Stamp Toggle (T34) – Circle style, black & white
+// MARK: - Date Stamp Toggle (T34) – Calendar-style button, black & white
 struct DateStampSwitch: View {
     @Binding var isOn: Bool
 
@@ -151,19 +151,9 @@ struct DateStampSwitch: View {
                 isOn.toggle()
             }
         }) {
-            ZStack {
-                // Outer circle (outline)
-                Circle()
-                    .stroke(Color.white, lineWidth: 2)
-                    .frame(width: 20, height: 20)
-                
-                // Inner filled circle when active
-                if isOn {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 12, height: 12)
-                }
-            }
+            Image(systemName: isOn ? "calendar.circle.fill" : "calendar.circle")
+                .font(.system(size: 28))
+                .foregroundColor(.white)
         }
         .buttonStyle(.plain)
     }

@@ -459,6 +459,10 @@ class PhotoManager: ObservableObject {
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: filter) {
                 filtered = withEffects
             }
+            if photo.hasBakedDate && filter == .t34,
+               let withDate = FilmDateOverlay.apply(to: filtered) {
+                filtered = withDate
+            }
             self.removeAllFilteredVariants(for: id)
             if let data = filtered.jpegData(compressionQuality: PhotoManager.jpegCompressionQuality) {
                 try? data.write(to: filtURL)

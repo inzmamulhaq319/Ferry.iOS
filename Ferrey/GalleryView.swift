@@ -636,7 +636,11 @@ struct FullImageView: View {
                 )
                 try Task.checkCancellation()
                 await MainActor.run {
-                    if let img = adjusted { loadedImages[photo.id] = img }
+                    guard var img = adjusted else { return }
+                    if photo.hasBakedDate, selectedFilter == .t34, let withDate = FilmDateOverlay.apply(to: img) {
+                        img = withDate
+                    }
+                    loadedImages[photo.id] = img
                 }
             } catch { }
         }
