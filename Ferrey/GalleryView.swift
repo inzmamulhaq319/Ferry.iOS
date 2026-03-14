@@ -162,7 +162,7 @@ struct GalleryView: View {
                                let uiImage = UIImage(data: data)?.fixedOrientation() {
                                 PhotoManager.shared.lastCapturedExposure = 0.5
                                 await MainActor.run {
-                                    PhotoManager.shared.addPhoto(original: uiImage, filter: .normal, shouldAutoSave: false)
+                                    PhotoManager.shared.addPhoto(original: uiImage, filter: .normal, shouldAutoSave: false, isImported: true)
                                 }
                             }
                         }

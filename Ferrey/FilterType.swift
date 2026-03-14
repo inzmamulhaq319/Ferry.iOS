@@ -261,6 +261,8 @@ struct PhotoMetadata: Codable, Identifiable, Equatable {
     var lastUpdated: Date = Date()
     /// True if this photo was originally captured with T34 date baked into the pixels.
     var hasBakedDate: Bool = false
+    /// True if this photo was imported from library (not captured in-app). Date applies when user applies T34 in gallery.
+    var isImported: Bool = false
 }
 
 class PhotoManager: ObservableObject {
@@ -325,7 +327,7 @@ class PhotoManager: ObservableObject {
         getDocumentsDirectory().appendingPathComponent("\(id)_filtered.jpg")
     }
 
-    func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true, completion: (() -> Void)? = nil) {
+    func addPhoto(original: UIImage, filter: FilterType, shouldAutoSave: Bool = true, isImported: Bool = false, completion: (() -> Void)? = nil) {
         let id = UUID().uuidString
         let applyFullEffects = (filter != .normal)
         // Default 100% texture for any filter except Normal; Normal stays 0%
@@ -365,7 +367,8 @@ class PhotoManager: ObservableObject {
                 textureIntensity: textureValue,
                 exposureIntensity: exposureValue,
                 lastUpdated: Date(),
-                hasBakedDate: didBakeDate
+                hasBakedDate: didBakeDate,
+                isImported: isImported
             )
             DispatchQueue.main.async {
                 withAnimation(.easeInOut(duration: 0.3)) {
@@ -414,8 +417,9 @@ class PhotoManager: ObservableObject {
             if let withEffects = DustAndDateEffectUtils.applyEffects(to: filtered, for: newFilter) {
                 filtered = withEffects
             }
-            // If this photo originally had a baked date, ensure it stays even when reapplying T34.
-            if photo.hasBakedDate && newFilter == .t34,
+            // Apply date when T34 only for: already had baked date, or imported photo (library import + T34 in gallery).
+            if newFilter == .t34,
+               (photo.hasBakedDate || photo.isImported),
                let withDate = FilmDateOverlay.apply(to: filtered) {
                 filtered = withDate
             }
@@ -426,6 +430,9 @@ class PhotoManager: ObservableObject {
                 self.photos[index].filter = newFilter
                 self.photos[index].textureIntensity = texture
                 self.photos[index].lastUpdated = Date()
+                if newFilter == .t34 && (photo.hasBakedDate || photo.isImported) {
+                    self.photos[index].hasBakedDate = true
+                }
                 self.save()
                 completion(filtered)
             }
