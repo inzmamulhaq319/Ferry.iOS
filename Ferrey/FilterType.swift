@@ -18,7 +18,7 @@ import Kingfisher
 // MARK: - Filter Type Definition
 
 enum FilterType: String, CaseIterable, Equatable, Hashable {
-    case normal, t32Update, t34, apeninos, asf, bandw, f7x, luxury, terra
+    case normal, t32Update, apeninos, asf, t34, bandw, f7x, luxury, terra
 
     var title: String {
         switch self {
@@ -44,9 +44,9 @@ enum FilterType: String, CaseIterable, Equatable, Hashable {
 
     var isPro: Bool {
         switch self {
-            case .normal, .t32Update, .t34, .apeninos, .asf:
+            case .normal, .t32Update, .apeninos, .asf:
                 return false
-            case .bandw, .f7x, .luxury, .terra:
+            case .t34, .bandw, .f7x, .luxury, .terra:
                 return true
         }
     }
